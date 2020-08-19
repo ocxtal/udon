@@ -9,5 +9,4 @@ edition = "2018"
 [dependencies]
 bitfield = "0.13"
 log = "0.4"
-static_assertions = "0.1"
 

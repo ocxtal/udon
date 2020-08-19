@@ -17,9 +17,6 @@ https://samtools.github.io/hts-specs/
 #[macro_use]
 extern crate bitfield;
 
-// #[macro_use]
-// extern crate static_assertions;
-
 use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::{ size_of, transmute, forget };
