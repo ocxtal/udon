@@ -16,11 +16,13 @@ https://samtools.github.io/hts-specs/
 
 #[macro_use]
 extern crate bitfield;
-extern crate static_assertions;
+
+// #[macro_use]
+// extern crate static_assertions;
 
 use std::io::Write;
 use std::marker::PhantomData;
-use std::mem::{ size_of, transmute };
+use std::mem::{ size_of, transmute, forget };
 use std::ops::Range;
 use std::ptr::copy_nonoverlapping;
 use std::slice::{ Iter, IterMut, from_raw_parts, from_raw_parts_mut };
@@ -37,6 +39,7 @@ use core::arch::aarch64::*;				/* requires nightly */
 
 /* logging */
 #[macro_use]
+#[allow(unused_imports)]				/* we need identifier `debug`, but it'll be aliased to println */
 extern crate log;
 
 #[cfg(test)]
@@ -180,7 +183,7 @@ pub struct UdonPrecursor {
 	block: SlicePrecursor<Block>,
 	ins: SlicePrecursor<u8>
 }
-assert_eq_size!(Udon, UdonPrecursor);
+// assert_eq_size!(Udon, UdonPrecursor);
 
 
 /* Precursor
@@ -195,12 +198,12 @@ struct SlicePrecursor<T> {
 	/* just equivalent to Range<usize> */
 	ofs: usize,
 	len: usize,
-	_marker: PhantomData<T>
+	_marker: PhantomData<T>			/* not effectively used for now. what to do with this? */
 }
 
 #[allow(dead_code)]
 impl<'a, T> SlicePrecursor<T> {
-	fn compose(range: Range<usize>) -> Self {
+	fn compose(range: &Range<usize>) -> Self {
 		SlicePrecursor::<T> {
 			ofs: range.start,
 			len: range.end - range.start,
@@ -208,44 +211,17 @@ impl<'a, T> SlicePrecursor<T> {
 		}
 	}
 
-	fn finalize_raw(self, base: *const u8) -> &'a [T] {
+	fn finalize_raw(&self, base: *const u8) -> &'a [T] {
 		let ptr = base.wrapping_add(self.ofs) as *const T;
 		let cnt = self.len / size_of::<T>();
 		unsafe { from_raw_parts(ptr, cnt) }
 	}
 
-	fn finalize(self, v: &'a Vec<u8>) -> &'a [T] {
+	fn finalize(&self, v: &'a Vec<u8>) -> &'a [T] {
 		let base = v.as_ptr() as *const u8;
-		Self::finalize_raw(self, base)
+		self.finalize_raw(base)
 	}
 }
-
-/*
-trait SlicePrecursor<'a, T> {
-	fn compose(range: Range<usize>) -> Self;
-	fn finalize(self, base: *const u8) -> Self;
-}
-
-impl<'a, T> Precursor<'a, T> for &'a [T] {
-	fn compose(range: Range<usize>) -> Self {
-		assert!(((range.end - range.start) % size_of::<T>()) == 0);
-
-		let ptr   = range.start as *const T;
-		let count = (range.end - range.start) / size_of::<T>();
-
-		unsafe { from_raw_parts(ptr, count) }
-	}
-
-	fn finalize(self, base: *const u8) -> &'a [T] {
-		let offset = self.as_ptr() as usize;
-
-		let ptr   = base.wrapping_add(offset) as *const T;
-		let count = self.len();
-
-		unsafe { from_raw_parts(ptr, count) }
-	}
-}
-*/
 
 
 /* SimdAlignedU8
@@ -323,7 +299,7 @@ impl<T: Sized + Copy + Default> Writer<T> for Vec<T> {
 
 /* PeekFold iterator
 
-Similar to Iterator::`try_fold`, but it doesn't consume the last-peeked element.
+Similar to `Iterator::try_fold`, but it doesn't consume the last-peeked element.
 The iteration can be resumed from the element of the last failure.
 */
 trait PeekFold<T: Sized> {
@@ -400,7 +376,8 @@ fn encode_base_unchecked(c: char) -> u8 {
 
 #[allow(dead_code)]
 fn decode_base_unchecked(c: u32) -> char {
-	match "ACGT".bytes().nth(c as usize) {
+	/* one-hot encoding */
+	match "-AC-G---T-------".bytes().nth(c as usize) {
 		None    => '-',
 		Some(x) => x as char
 	}
@@ -418,6 +395,99 @@ fn op_marker(x: u8) -> u32 {
 	(x>>5) as u32
 }
 
+fn op_is_cont(x: u8) -> bool {
+	(x & 0x1f) == 0x1f
+}
+
+
+/* Insertion marker tracker
+
+CompressMark::Ins should be ignored when the succeeding op length is 31,
+which actually indicates its chunk length is 30. The length 31 appears when
+longer matching region is divided into multiple chunks, so it shouldn't be
+regarded as insertion even if the marker is Ins.
+
+InsTracker handles this double-meaning Ins marker. It keeps "ignore" state,
+which indicates Ins marker of the next op is treated NOP. It also keeps
+track of the inserted sequence array, by eating each variable-length sub-
+string on the array every time Ins marker apperared on the op stream. The
+current substring (inserted sequence for the current op with Ins marker)
+is available via `as_slice()` method.
+*/
+struct InsTracker<'a> {
+	ignore_next: bool,
+	len: usize,
+	ins: Iter<'a, u8>
+}
+
+impl<'a> InsTracker<'a> {
+	fn new(last_op: u8, ins: &'a [u8]) -> Self {
+		InsTracker::<'a> {
+			ignore_next: op_is_cont(last_op),
+			len: ins.len(),
+			ins: ins.iter()
+		}
+	}
+
+	fn forward(&mut self, op: u8) -> bool {
+		/* check if the current op has ins, and update state for the next op */
+		let is_ins = !self.ignore_next && op_marker(op) == CompressMark::Ins as u32;
+		self.ignore_next = op_is_cont(op);
+
+		/* if current does not have ins, just return it's not ins */
+		if !is_ins { return false; }
+
+		/* has ins, forward iterator */
+		self.ins.try_fold(1, |a, &x| {			/* consumes at least one byte */
+			let a = a - (x == 0) as usize;
+			if a == 0 { return None; }
+			return Some(a);
+		});
+		return true;
+	}
+
+	fn get_offset(&self) -> usize {
+		self.len - self.ins.as_slice().len()	/* is there better way for tracking the offset? */
+	}
+
+	fn as_slice(&self) -> &'a [u8] {
+		self.ins.as_slice()
+	}
+}
+
+
+/* OpsIterator
+
+*/
+#[allow(dead_code)]
+struct OpsIter<'a> {
+	iter: Iter<'a, u8>,
+	rofs: usize
+}
+
+trait IntoOpsIterator<'a> {
+	fn iter_ops(self, base_rofs: usize) -> OpsIter<'a>;
+}
+
+impl<'a> IntoOpsIterator<'a> for &'a [u8] {
+	fn iter_ops(self, base_rofs: usize) -> OpsIter<'a> {
+		OpsIter {
+			iter: self.iter(),
+			rofs: base_rofs
+		}
+	}
+}
+
+impl<'a> Iterator for OpsIter<'a> {
+	type Item = (u8, usize);
+
+	#[allow(dead_code)]
+	fn next(&mut self) -> Option<Self::Item> {
+		let x    = self.iter.next()?;
+		self.rofs += op_len(*x);
+		Some((*x, self.rofs))
+	}
+}
 
 #[cfg(test)]
 mod test_utils {
@@ -449,6 +519,7 @@ mod test_utils {
 
 	#[test]
 	fn test_isnum() {
+		/* trivial */
 		assert_eq!(isnum('0' as u8), true);
 		assert_eq!(isnum('9' as u8), true);
 		assert_eq!(isnum('-' as u8), false);
@@ -517,7 +588,9 @@ fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], QueryClip)> {
 /* copy 4bit-encoded bases, for storing insertions */
 fn copy_packed_nucl(src: &[u8], dst: &mut [u8], ofs: usize, len: usize) {
 
-	/* very very very very very very very very very naive way */
+	debug!("{}, {}, {:?}", ofs, len, src);
+
+	/* very very very very very very very very very naive way though fine */
 	for i in 0 .. len {
 		let pos = ofs + i;
 
@@ -528,13 +601,17 @@ fn copy_packed_nucl(src: &[u8], dst: &mut [u8], ofs: usize, len: usize) {
 			src[pos / 2] & 0x0f
 		};
 
-		/* store to dst */
+		/* store to dst in little endian */
 		if (i & 0x01) == 0 {
 			dst[i / 2]  = c;
 		} else {
 			dst[i / 2] |= c<<4;
 		}
+
+		debug!("push {} at {}, ({}, {})", c, i, pos, src[pos / 2]);
 	}
+
+	debug!("{:?}", &dst[0 .. (len + 1) / 2]);
 }
 
 
@@ -545,8 +622,7 @@ pub struct UdonBuilder<'a> {
 	cigar: Iter<'a, Cigar>,
 	mdstr: Iter<'a, u8>,
 	query: &'a [u8],
-	qofs: usize,
-	rspan: usize
+	qofs: usize
 }
 
 impl<'a, 'b> UdonBuilder<'a> {
@@ -603,7 +679,7 @@ impl<'a, 'b> UdonBuilder<'a> {
 		debug!("len({}), marker({})", match_len, marker);
 
 		let op = (marker<<5) as u8 | match_len as u8;
-		assert!(op != 0);
+		// assert!(op != 0);
 
 		self.buf.reserve_to(1, |arr: &mut [u8], _: &[u8]| -> usize {
 			arr[0] = op;
@@ -652,30 +728,33 @@ impl<'a, 'b> UdonBuilder<'a> {
 		let ofs = self.qofs;
 		let len = c.len() as usize;
 		self.qofs += len;
+		debug!("len({}), qofs({})", len, self.qofs);
 
 		self.save_ins(ofs, len);		/* use offset before forwarding */
 		return Some(xrem - len);		/* there might be remainder */
 	}
 	fn eat_match(&mut self, xrem: usize, last_op: u32) -> Option<usize> {
-		let c = self.peek_cigar()?;
-		debug!("c({}, {})", c.op(), c.len());
 
-		let is_valid = c.op() != CigarOp::Ins as u32;
+		/* consumes only when the op is match. works as an escape route for del after ins or ins after del */
+		let c = self.peek_cigar()?;
+		let is_valid = c.op() == CigarOp::Match as u32;
 		if is_valid { self.cigar.next()?; }
 
+		/* forward qofs before adjusting xrem with the previous op */
+		self.qofs += xrem;
+
+		/* adjust crem and xrem; last_op == 0 for ins, > 0 for del */
 		let mut crem = if is_valid { c.len() as usize } else { 0 } + last_op as usize;
-		let mut xrem = xrem;			/* might continues from the previous cigar op, possibly insertion */
-		let mut op = last_op;			/* insertion, deletion, or mismatch */
+		let mut xrem = xrem + last_op as usize;		/* might continues from the previous cigar op, possibly insertion */
+		let mut op = last_op;						/* insertion, deletion, or mismatch */
 
 		debug!("eat_match, crem({}), xrem({})", crem, xrem);
 
 		while xrem < crem {
-			debug!("mismatch?, crem({}), xrem({})", crem, xrem);
-
 			/* xrem < crem indicates this op (cigar span) is interrupted by mismatch(es) at the middle */
 			self.push_match(xrem, op);
-			crem      -= xrem;
-			self.qofs += xrem;
+			crem -= xrem;
+			debug!("mismatch?, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
 
 			while self.is_double_mismatch() {
 				debug!("{:?}", from_utf8(self.mdstr.as_slice()));
@@ -690,14 +769,18 @@ impl<'a, 'b> UdonBuilder<'a> {
 			op = self.next_base();		/* we only have a single mismatch remaining, will be combined to succeeding matches */
 			self.mdstr.nth(0)?;
 
-			/* next match length */
-			xrem = self.eat_md_eq() + 1;/* xrem for the next { match, insertion } region, including the last mismatch */
+			/*
+			xrem for the next { match, insertion } region, including +1 for the last mismatch.
+			adjustment is already done on crem, by not decrementing it for the last mismatch.
+			*/
+			xrem = self.eat_md_eq() + 1;
+			self.qofs += xrem - 1;
 			debug!("updated xrem, crem({}), xrem({})", crem, xrem);
 		}
 
 		self.push_match(crem, op);		/* tail match; length is the remainder of crem */
 		xrem      -= crem;
-		self.qofs += crem;
+		self.qofs -= xrem;
 
 		debug!("done, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
 		return Some(xrem);				/* nonzero if insertion follows */
@@ -735,6 +818,8 @@ impl<'a, 'b> UdonBuilder<'a> {
 		let c = self.peek_cigar()?;
 		debug!("c({}, {})", c.op(), c.len());
 		if c.op() == CigarOp::Ins as u32 {
+			xrem = self.eat_md_eq();
+
 			/* op iterator not forwarded here */
 			self.push_op(0, CompressMark::Ins as u32);
 			self.ins.write(&[0]).ok()?;	/* dummy insertion marker for this */
@@ -767,11 +852,11 @@ impl<'a, 'b> UdonBuilder<'a> {
 				if c.op() != CigarOp::Del as u32 { break; }
 
 				/* the CIGAR ends with deletion; must be treated specially */
-				if self.cigar.as_slice().len() < 2 { break; }
+				if self.cigar.as_slice().len() < 2 { break 'outer; }
 
 				/* push deletion-match pair, then parse next eq length */
 				let op = self.eat_del()?;
-				xrem = self.eat_md_eq() + op as usize;
+				xrem = self.eat_md_eq();
 				debug!("op({}), xrem({})", op, xrem);
 				xrem = self.eat_match(xrem, op)?;
 			}
@@ -786,7 +871,7 @@ impl<'a, 'b> UdonBuilder<'a> {
 			debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar.as_slice().len());
 
 			/* the CIGAR ends with insertion; must be treated specially */
-			if self.cigar.as_slice().len() < 2 { break; }
+			if self.cigar.as_slice().len() < 2 { break 'outer; }
 
 			/* push insertion-match pair, update eq length remainder */
 			xrem = self.eat_ins(xrem)?;
@@ -821,17 +906,9 @@ impl<'a, 'b> UdonBuilder<'a> {
 	}
 
 	/* construct index for blocks */
-	fn forward_ins(ins: &mut Iter<u8>, op_offset: usize, marker: u32) -> usize {
-		if marker != 0 { return 0; }
-		if op_offset == 0 { return 0; }		/* ignore first ins marker */
-
-		ins.peek_fold(0, |a, &x| {
-			if x == 0 { return None; }
-			return Some(a + 1);
-		})
-	}
-
 	fn push_block(dst: &mut IterMut<Block>, ins_offset: usize, op_offset: usize, op_skip: usize) {
+		debug!("push_block: {}, {}, {}", ins_offset, op_offset, op_skip);
+
 		let bin = match dst.next() {
 			None => { return; },
 			Some(bin) => bin
@@ -855,29 +932,29 @@ impl<'a, 'b> UdonBuilder<'a> {
 		let range = buf.reserve_to(block_count, |block: &mut [Block], base: &[u8]| {
 			debug!("{:?}", base);
 
-			/* src: both are &[u8] */
-			let ops = (&base[op_range.start .. op_range.end]).iter();
-			let mut ins = (&base[ins_range.start .. ins_range.end]).iter();
+			/* src: both are &[u8] and placed within base */
+			let ops = (&base[op_range.start .. op_range.end]).iter_ops(0);
+			let mut ins = InsTracker::new(0, &base[ins_range.start .. ins_range.end]);
 
-			/* dst */
+			/* prepare dst. put head boundary info for simplicity */
 			let mut dst = block.iter_mut();
 			Self::push_block(&mut dst, 0, 0, 0);
 
 			/* I want this loop be more lightweight... */
-			let mut rpos: usize = 0;		/* ref_pos */
-			let mut iofs: usize = 0;		/* ins_offset */
-			for (i, &x) in ops.enumerate() {
-				let next_boundary = (rpos | (BLOCK_PITCH - 1)) + 1;
+			let mut rbnd: usize = BLOCK_PITCH;
+			for (i, (x, rpos)) in ops.enumerate() {
+				let rem  = rbnd - (rpos - op_len(x));
 
-				/* forward insertion array and reference-side offset */
-				rpos += op_len(x);
-				iofs += Self::forward_ins(&mut ins, i, op_marker(x));
+				/* forward insertion array */
+				let iofs = ins.get_offset();
+				ins.forward(x);
 
 				/* if forwarded rpos doexn't exceed the next boundary, just skip this op */
-				if rpos < next_boundary { continue; }
+				if rpos <= rbnd { continue; }
+				rbnd += BLOCK_PITCH;
 
 				/* boundary found; save block info */
-				Self::push_block(&mut dst, iofs, i, rpos & 0x1f);
+				Self::push_block(&mut dst, iofs, i, rem);
 			}
 
 			let dst = dst.into_slice();
@@ -918,7 +995,7 @@ impl<'a, 'b> UdonBuilder<'a> {
 		UdonPrecursor {
 			/* just save */
 			size:     range.end - range.start,
-			ref_span: self.rspan,
+			ref_span: ref_span,
 
 			/* compose fake slices (dereference causes SEGV) */
 			op:    SlicePrecursor::compose(op),
@@ -946,8 +1023,7 @@ impl<'a> UdonPrecursor {
 			cigar: cigar.iter(),	/* iterator for slice is a pair of pointers (ptr, tail) */
 			mdstr: mdstr.iter(),
 			query: packed_query,
-			qofs:  qclip.head,		/* initial offset for query sequence, non-zero for soft clipped alignments */
-			rspan: 0				/* calcd in build_index */
+			qofs:  qclip.head		/* initial offset for query sequence, non-zero for soft clipped alignments */
 		};
 
 		/* if error detected, unwind destination vector and return it (so that the vector won't lost) */
@@ -992,7 +1068,7 @@ impl<'a> UdonPrecursor {
 	pub unsafe fn build(buf: Vec<u8>, cigar: &'a [u32], packed_query: &'a [u8], mdstr: &'a [u8]) -> (Vec<u8>, Option<UdonPrecursor>) {
 		
 		/* for compatibility with bam streamed reader */
-		let cigar = unsafe { transmute::<&'a [u32], &'a [Cigar]>(cigar) };
+		let cigar = transmute::<&'a [u32], &'a [Cigar]>(cigar);
 
 		let (buf, precursor) = Self::build_core(buf, cigar, packed_query, mdstr);
 		match precursor {
@@ -1105,17 +1181,18 @@ impl<'a, 'b> Udon<'a> {
 		}
 	}
 
-	fn compose_box(mut buf: Vec<u8>, precursor: UdonPrecursor) -> Box<Udon<'a>> {
+	fn compose_box(buf: Vec<u8>, precursor: UdonPrecursor) -> Box<Udon<'a>> {
+		let mut buf = buf;
 
 		/* compose pointer-adjusted header on stack */
-		let base: *const u8 = buf.as_ptr();
-		let header = unsafe { Self::from_precursor_raw(base, &precursor) };
+		let base: *mut u8 = buf.as_mut_ptr();
+		let header = unsafe { Self::from_precursor_raw(base as *const u8, &precursor) };
 
 		/* compose box and copy header into it */
 		let udon = unsafe {
 			/* convert buffer (on heap) to box */
 			let mut udon = Box::<Udon<'a>>::from_raw(
-				transmute::<*mut u8, *mut Udon<'a>>(buf.as_mut_ptr())
+				transmute::<*mut u8, *mut Udon<'a>>(base)
 			);
 
 			/* copy header from stack to heap (box) */
@@ -1125,6 +1202,10 @@ impl<'a, 'b> Udon<'a> {
 
 			udon
 		};
+
+		/* heap block inside buf was moved to udon so we have to release buf */
+		forget(buf);		/* note: this allowed outside unsafe */
+
 		udon
 	}
 
@@ -1136,7 +1217,7 @@ impl<'a, 'b> Udon<'a> {
 		self.ref_span
 	}
 
-	pub fn decode_into(&self, dst: &mut Vec<u8>, ref_span: Range<usize>) -> Option<usize> {
+	pub fn decode_into(&self, dst: &mut Vec<u8>, ref_span: &Range<usize>) -> Option<usize> {
 
 		/* check sanity of the span (range) and return None if broken */
 		self.check_span(&ref_span)?;
@@ -1147,24 +1228,27 @@ impl<'a, 'b> Udon<'a> {
 		Some(used)
 	}
 
-	pub fn decode(&self, ref_span: Range<usize>) -> Option<Vec<u8>> {
+	pub fn decode(&self, ref_span: &Range<usize>) -> Option<Vec<u8>> {
+
+		/* check sanity of the span (range) and return None if broken */
+		self.check_span(&ref_span)?;
 
 		let size = ref_span.end - ref_span.start;
 		let mut buf = Vec::<u8>::with_capacity(size);
 
-		let used = self.decode_into(&mut buf, ref_span)?;
+		let used = self.decode_into(&mut buf, &ref_span)?;
 		buf.resize(used, 0);
 
 		return Some(buf);
 	}
 
 	#[allow(dead_code, unused_variables)]
-	pub fn decode_scaled_into(&self, dst: &mut Vec<u8>, ref_span: Range<usize>, scale: f64) -> Option<usize> {
+	pub fn decode_scaled_into(&self, dst: &mut Vec<u8>, ref_span: &Range<usize>, scale: f64) -> Option<usize> {
 		unimplemented!();
 	}
 
 	#[allow(dead_code, unused_variables)]
-	pub fn decode_scaled(&self, ref_span: Range<usize>, scale: f64) -> Option<Vec<u8>> {
+	pub fn decode_scaled(&self, ref_span: &Range<usize>, scale: f64) -> Option<Vec<u8>> {
 		unimplemented!();
 	}
 
@@ -1191,36 +1275,38 @@ impl<'a, 'b> Udon<'a> {
 	};
 
 	#[cfg(all(target_arch = "x86_64"))]
-	unsafe fn decode_core_block(dst: &mut [u8], op: u32, ins: u64) -> (usize, u64) {
+	unsafe fn decode_core_block(dst: &mut [u8], op: u8, ins: u32) -> (usize, u32) {
 
 		/* load constants; expelled out of the innermost loop when inlined */
 		let del_mask      = _mm_load_si128(&Self::DEL_MASK.v as *const [u8; 16] as *const __m128i);
 		let scatter_mask  = _mm_load_si128(&Self::SCATTER_MASK.v as *const [u8; 16] as *const __m128i);
 		let is_del_thresh = _mm_load_si128(&Self::IS_DEL_THRESH.v as *const [u8; 16] as *const __m128i);
 
-		/* keep op on general-purpose register */
-		let rop = op as u64;
-
 		/* compute deletion mask */
-		let xop = _mm_cvtsi64_si128(rop as i64);						/* copy op to xmm */
-		let xop_scattered = _mm_shuffle_epi8(xop, scatter_mask);		/* [op, op, op, 0, ...] */
-		let is_del = _mm_cmpgt_epi8(xop_scattered, is_del_thresh);		/* signed comparison */
+		let xop = _mm_cvtsi64_si128(op as i64);					/* copy op to xmm */
+		let xop = _mm_shuffle_epi8(xop, scatter_mask);			/* [op, op, op, 0, ...] */
+		let is_del = _mm_cmpgt_epi8(xop, is_del_thresh);		/* signed comparison */
 
 		/* compute mismatch / insertion mask */
-		let marker = if rop == 0 { ins } else { rop>>5 };
-		let ins_mismatch = _mm_cvtsi64_si128(marker as i64);
+		let marker = if op_marker(op) == CompressMark::Ins as u32 { ins } else { op_marker(op) };
+		let ins_mismatch_mask = _mm_cvtsi64_si128(marker as i64);
 
 		/* merge deletion / insertion-mismatch vector */
-		let merged = _mm_blendv_epi8(ins_mismatch, del_mask, is_del);
-		_mm256_storeu_si256(dst as *mut [u8] as *mut __m256i, _mm256_castsi128_si256(merged));
+		let merged = _mm_blendv_epi8(ins_mismatch_mask, del_mask, is_del);
+
+		_mm_storeu_si128(&mut dst[0 .. 16] as *mut [u8] as *mut __m128i, merged);
+		_mm_storeu_si128(&mut dst[16 .. 32] as *mut [u8] as *mut __m128i, _mm_setzero_si128());
 
 		/*
 		compute forward length; 31 is "continuous marker"
 		rop-to-rop critical path length is 6
 		*/
-		let len = rop as usize & 0x1f;
-		let next_ins     = if len == 0x1f { 0 } else { Op::Ins as u64 };	/* next ins will be masked if 0x1f */
-		let adjusted_len = if len == 0x1f { len - 1 } else { len };
+		let next_ins     = if op_is_cont(op) { 0 } else { Op::Ins as u32 };	/* next ins will be masked if 0x1f */
+		let adjusted_len = op_len(op);
+
+		debug!("{:#x}, {:#x}, {:#x}, {:#x}", op>>5, ins, marker, op_len(op));
+		// debug!("{}, {:?}", adjusted_len, transmute::<__m128i, [u8; 16]>(merged));
+
 		(adjusted_len, next_ins)
 	}
 
@@ -1234,7 +1320,7 @@ impl<'a, 'b> Udon<'a> {
 		/* working variables */
 		let mut buf: [u8; 96] = [0; 96];
 		let mut ops = ops.iter();
-		let mut ins = Op::Ins as u64;
+		let mut ins = 0; // Op::Ins as u64;
 		let mut ofs = offset;
 		let mut rem = len;
 
@@ -1242,12 +1328,11 @@ impl<'a, 'b> Udon<'a> {
 			/* decode head block */
 			let op = ops.next()?;
 			let (block_len, next_ins) = unsafe {
-				Self::decode_core_block(&mut buf, *op as u32, ins)
+				Self::decode_core_block(&mut buf, *op, ins)
 			};
 
 			let block_len = block_len - ofs;
 			dst.write(&buf[ofs .. ofs + block_len]).ok()?;		/* I expect it never fails though... */
-
 			rem -= block_len;
 			ins = next_ins;			/* just copy to mutable variable for use in the loop */
 			ofs = 0;				/* clear offset for tail */
@@ -1256,10 +1341,10 @@ impl<'a, 'b> Udon<'a> {
 			while rem > 32 {
 				let op = ops.next()?;
 				let (block_len, next_ins) = unsafe {
-					Self::decode_core_block(&mut buf, *op as u32, ins)
+					Self::decode_core_block(&mut buf, *op, ins)
 				};
 
-				dst.write(&buf[0..32]).ok()?;
+				dst.write(&buf[0 .. block_len]).ok()?;
 				rem -= block_len;
 				ins = next_ins;
 			}
@@ -1267,10 +1352,11 @@ impl<'a, 'b> Udon<'a> {
 
 		/* tail */ {
 			let end = ofs + rem;
+			let mut ofs = 0;
 			while ofs < end {
 				let op = ops.next()?;
 				let (block_len, next_ins) = unsafe {
-					Self::decode_core_block(&mut buf[ofs ..], *op as u32, ins)
+					Self::decode_core_block(&mut buf[ofs ..], *op, ins)
 				};
 
 				ofs += block_len;
@@ -1279,11 +1365,14 @@ impl<'a, 'b> Udon<'a> {
 
 			dst.write(&buf[end - rem .. end]).ok()?;
 		}
+
 		Some(len)
 	}
 
 	/* Check sanity of the span. If queried span (range) is out of the indexed one, return None */
 	fn check_span(&self, range: &Range<usize>) -> Option<()> {
+
+		debug!("span({}, {}), ref_span({})", range.start, range.end, self.ref_span);
 
 		if range.end < range.start { return None; }
 		if range.end > self.ref_span { return None; }
@@ -1291,7 +1380,7 @@ impl<'a, 'b> Udon<'a> {
 	}
 
 	/* fetch block head for this pos. */
-	fn fetch_ops_block(&self, pos: usize) -> (&[u8], usize) {
+	fn fetch_ops_block(&self, pos: usize) -> (u8, &[u8], usize) {
 
 		let block_index = pos / BLOCK_PITCH;
 		let block_rem   = pos & (BLOCK_PITCH - 1);
@@ -1302,24 +1391,30 @@ impl<'a, 'b> Udon<'a> {
 		// let ins_offset = block.ins_offset() as usize;
 
 		let ops = &self.op[op_offset ..];
-		return (ops, block_rem + op_skip);
+		let last_op = if op_offset == 0 {
+			0
+		} else {
+			self.op[op_offset - 1]
+		};
+
+		debug!("pos({}), rem({}), skip({})", pos, block_rem, op_skip);
+		return (last_op, ops, block_rem + op_skip);
 	}
 
-	fn fetch_ins_block(&self, pos: usize) -> (&[u8], bool) {
+	fn fetch_ins_block(&self, pos: usize) -> &[u8] {
 
 		let block_index = pos / BLOCK_PITCH;
 		let block = &self.block[block_index];
 
 		let ins_offset = block.ins_offset() as usize;
-		let skip = (block_index == 0) as bool;
-
-		return (&self.ins[ins_offset ..], skip);
+		return &self.ins[ins_offset as usize ..];
 	}
 
 	fn scan_op_array(&self, pos: usize) -> (&[u8], usize) {
 
 		/* get block head for this pos */
-		let (ops, rem) = self.fetch_ops_block(pos);
+		let (_, ops, rem) = self.fetch_ops_block(pos);
+		debug!("rem({}), ops({:?})", rem, ops);
 
 		/* linear polling */
 		let mut ops = ops.iter();
@@ -1330,6 +1425,8 @@ impl<'a, 'b> Udon<'a> {
 			if len >= rem { return None; }
 			return Some(len);
 		});
+
+		debug!("rem({}), ofs({})", rem, ofs);
 		return (ops.as_slice(), rem - ofs);		/* is this sound? (I'm not sure...) */
 	}
 
@@ -1337,32 +1434,29 @@ impl<'a, 'b> Udon<'a> {
 	/* ins */
 	fn scan_ins_array(&self, pos: usize) -> Option<&[u8]> {
 
-		let (ops, rem)  = self.fetch_ops_block(pos);
-		let (ins, skip) = self.fetch_ins_block(pos);
+		let (last_op, ops, rem) = self.fetch_ops_block(pos);
+		let ins = self.fetch_ins_block(pos);
+		debug!("rem({}), ops({:?}), ins({:?}), last_op({})", rem, ops, ins, last_op);
 
 		/* linear polling on op array */
 		let mut ops = ops.iter();
-		let (len, count) = (&mut ops).peek_fold((0, skip as usize), |(a, c), &x| {
+		let mut ins = InsTracker::new(last_op, ins);
+		let (len, count) = (&mut ops).peek_fold((0, 0), |(a, c), &x| {
 			let len = a + op_len(x);
-			if len >= rem { return None; }
+			debug!("a({}), len({}), rem({}), c({})", a, len, rem, c);
+			if len > rem { return None; }
 
-			let is_ins = (op_marker(x) == CompressMark::Ins as u32) as usize;
-			return Some((len, c + is_ins));
+			let is_ins = ins.forward(x);
+			return Some((len, c + is_ins as usize));
 		});
+		debug!("len({}), count({})", len, count);
 
-		/* check if the column has insertion */
-		if len > rem { return None; }
+		/* if the length doesn't match, it indicates the column doesn't have insertion (so the query is wrong) */
+		if len < rem { return None; }
 
-		/* linear polling on ins array */
-		let mut ins = ins.iter();
-		ins.peek_fold(count, |a, &x| {
-			if a == 0 { return None; }
-
-			return Some(a - (x == 0) as usize);
-		});
-
+		/* insertion found. determine the valid length of the slice */
 		let ins = ins.as_slice();
-		let len = ins.clone().iter().peek_fold(0, |a, &x| {
+		let len = ins.iter().peek_fold(0, |a, &x| {
 			if x == 0 { return None; }
 			return Some(a + 1);
 		});
@@ -1373,6 +1467,7 @@ impl<'a, 'b> Udon<'a> {
 		/* expand packed nucleotide to Vec */
 		let range = dst.reserve_to(ins.len() * 2, |arr: &mut [u8], _: &[u8]| -> usize {
 			for (i, x) in arr.iter_mut().enumerate() {
+				/* little endian */
 				*x = if (i & 0x01) == 0 {
 					ins[i / 2] & 0x0f
 				} else {
@@ -1380,7 +1475,9 @@ impl<'a, 'b> Udon<'a> {
 				};
 			}
 
-			let remove_tail = ins[ins.len() - 1] == 0;
+			let remove_tail = arr[arr.len() - 1] == 0;
+			debug!("{}, {}, {}, {:?}", ins.len(), arr.len(), remove_tail, arr);
+
 			arr.len() - remove_tail as usize
 		});
 
@@ -1411,7 +1508,7 @@ impl<'a, 'b> Udon<'a> {
 	}
 }
 
-
+/*
 /* UdonVec builder, see the comment above */
 struct UdonPrecursorVec {
 	buf: Vec<u8>,
@@ -1481,6 +1578,7 @@ impl<'a, 'b> UdonVec<'a, 'b> {
 	}
 
 }
+*/
 
 
 /*
@@ -1500,7 +1598,9 @@ impl Transcode for Udon<'_> {
 mod test {
 	use std::ops::Range;
 	use std::str::from_utf8;
-	use crate::{ Udon, UdonPrecursor, CigarOp, encode_base_unchecked };
+
+	#[allow(unused_imports)]
+	use crate::{ Udon, UdonPrecursor, CigarOp, BLOCK_PITCH, encode_base_unchecked, decode_base_unchecked };
 
 	macro_rules! cigar {
 		[ $( ( $op: ident, $len: expr ) ),* ] => ({
@@ -1511,6 +1611,8 @@ mod test {
 	macro_rules! nucl {
 		( $st: expr ) => ({
 			let s = $st;
+			println!("{:?}", s);
+
 			let mut v = Vec::<u8>::new();
 			let mut a: u8 = 0;
 			for (i, c) in s.bytes().enumerate() {
@@ -1530,44 +1632,969 @@ mod test {
 
 	macro_rules! encode_flat {
 		( $arr: expr ) => ({
-			let mut v = Vec::<u8>::new();
-			for &x in arr {
+			let mut v = Vec::new();
+			for &x in $arr {
 				let c = match x {
 					0x00 => 'M', 0x04 => 'A', 0x05 => 'C', 0x06 => 'G', 0x07 => 'T', 0x08 => 'D',
-					0x10 => 'M', 0x04 => 'A', 0x05 => 'C', 0x06 => 'G', 0x07 => 'T', 0x08 => 'D'
+					0x10 => 'M', 0x14 => 'A', 0x15 => 'C', 0x16 => 'G', 0x17 => 'T', 0x18 => 'D',
+					_ => ' '
 				};
-				v.push(c);
+				v.push(c as u8);
+			}
+			v
+		});
+	}
+
+	macro_rules! encode_ins {
+		( $arr: expr ) => ({
+			let mut v = Vec::new();
+			for &x in $arr {
+				v.push(if (x & 0x10) == 0x10 { 'I' } else { '-' } as u8);
+			}
+			v
+		});
+	}
+
+	#[allow(unused_macros)]
+	macro_rules! decode_nucl {
+		( $arr: expr ) => ({
+			let mut v = Vec::new();
+			for &x in $arr {
+				v.push(decode_base_unchecked((x as u32)>>4) as u8);
+				if (x & 0x0f) == 0 { continue; }		/* should be the last base */
+
+				v.push(decode_base_unchecked((x as u32) & 0x0f) as u8);
 			}
 			v
 		});
 	}
 
 	macro_rules! compare {
-		( $cigar: expr, $nucl: expr, $mdstr: expr, $flat: expr ) => ({
+		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $flat: expr, $ins: expr ) => ({
 			// let v = Vec::<u8>::new();
-			let u = Udon::build(&( $cigar ), &( $nucl ), &(( $mdstr ).as_bytes())).unwrap();
-			let f = u.decode(Range { start: 0, end: u.ref_span() }).unwrap();
+			let c = $cigar;
+			let n = $nucl;
+			let m = $mdstr;
+			let u = match Udon::build(&c, &n, &m.as_bytes()) {
+				None    => {
+					assert!(false, "failed to build index");
+					return;
+				},
+				Some(u) => u
+			};
+			let mut r: Range<usize> = $range;
+			if r.start == 0 && r.end == 0 {
+				r.end = u.ref_span();
+			}
+
+			let a = u.decode(&r).unwrap();
+			let f = encode_flat!(&a);
 			let d = from_utf8(&f).unwrap();
-			assert!(d == $flat);
+			assert!(d == $flat, "{:?}, {:?}", d, $flat);
+
+			let j = encode_ins!(&a);
+			let i = from_utf8(&j).unwrap();
+			assert!(i == $ins, "{:?}, {:?}", i, $ins);
+		});
+	}
+
+	macro_rules! compare_ins {
+		( $cigar: expr, $nucl: expr, $mdstr: expr, $pos: expr, $ins_seq: expr ) => ({
+			// let v = Vec::<u8>::new();
+			let c = $cigar;
+			let n = $nucl;
+			let m = $mdstr;
+			let u = match Udon::build(&c, &n, &m.as_bytes()) {
+				None    => {
+					assert!(false, "failed to build index");
+					return;
+				},
+				Some(u) => u
+			};
+
+			let i = match u.get_ins($pos) {
+				None    => vec!['*' as u8],
+				Some(v) => v.iter().map(|x| decode_base_unchecked(*x as u32) as u8).collect()
+			};
+			let i = from_utf8(&i).unwrap();
+			assert!(i == $ins_seq, "{:?}, {:?}", i, $ins_seq);
 		});
 	}
 
 	#[test]
-	fn test_udon() {
+	fn test_udon_build_match() {
 		compare!(
-			cigar![(Match, 4), (Ins, 1), (Match, 4), (Del, 1), (Match, 2), (Del, 7), (Match, 40)],
-			nucl!("ACGTACGTACGACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
-			"9^A2^ACGTACG20A9A0C0G7",
-			"MMMMMMMMDMMDDDDDDDMMMMMMMMMMMMMMMMMMMMAMMMMMMMMMACGMMMMMMM"
+			cigar![(Match, 4)],
+			nucl!("ACGT"),
+			"4",
+			Range { start: 0, end: 0 },
+			"MMMM",
+			"----"
 		);
-		
-
-
-		// assert!(false);
+		compare!(
+			cigar![(Match, 30)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+			"------------------------------"
+		);
+		compare!(
+			cigar![(Match, 31)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACG"),
+			"31",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+			"-------------------------------"
+		);
+		compare!(
+			cigar![(Match, 32)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"32",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+			"--------------------------------"
+		);
+		compare!(
+			cigar![(Match, 128)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"128",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+			"--------------------------------------------------------------------------------------------------------------------------------"
+		);
 	}
 
+	#[test]
+	fn test_udon_build_del() {
+		compare!(
+			cigar![(Match, 4), (Del, 1), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4^A4",
+			Range { start: 0, end: 0 },
+			"MMMMDMMMM",
+			"---------"
+		);
+		compare!(
+			cigar![(Match, 4), (Del, 3), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4^AGG4",
+			Range { start: 0, end: 0 },
+			"MMMMDDDMMMM",
+			"-----------"
+		);
+		compare!(
+			cigar![(Match, 4), (Del, 4), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4^AAAC4",
+			Range { start: 0, end: 0 },
+			"MMMMDDDDMMMM",
+			"------------"
+		);
+		compare!(
+			cigar![(Match, 4), (Del, 11), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4^GATAGATAGGG4",
+			Range { start: 0, end: 0 },
+			"MMMMDDDDDDDDDDDMMMM",
+			"-------------------"
+		);
+	}
 
+	#[test]
+	fn test_udon_build_ins() {
+		compare!(
+			cigar![(Match, 4), (Ins, 1), (Match, 4)],
+			nucl!("ACGTACGTA"),
+			"9",
+			Range { start: 0, end: 0 },
+			"MMMMMMMM",
+			"----I---"
+		);
+		compare!(
+			cigar![(Match, 4), (Ins, 2), (Match, 4)],
+			nucl!("ACGTACGTAC"),
+			"10",
+			Range { start: 0, end: 0 },
+			"MMMMMMMM",
+			"----I---"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_mismatch() {
+		compare!(
+			cigar![(Match, 10)],
+			nucl!("ACGTACGTAC"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMAMMMMM",
+			"----------"
+		);
+		compare!(
+			cigar![(Match, 10)],
+			nucl!("ACGTACGTAC"),
+			"4T0C4",
+			Range { start: 0, end: 0 },
+			"MMMMACMMMM",
+			"----------"
+		);
+		compare!(
+			cigar![(Match, 10)],
+			nucl!("ACGTACGTAC"),
+			"4T1A0T2",
+			Range { start: 0, end: 0 },
+			"MMMMAMGTMM",
+			"----------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_cont_mismatch() {
+		/* continuous flag */
+		compare!(
+			cigar![(Match, 34)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30T3",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMGMMM",
+			"----------------------------------"
+		);
+		compare!(
+			cigar![(Match, 64)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"60T3",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMAMMM",
+			"----------------------------------------------------------------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_cont_del() {
+		/* continuous flag */
+		compare!(
+			cigar![(Match, 30), (Del, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30^ACGT4",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMDDDDMMMM",
+			"--------------------------------------"
+		);
+		compare!(
+			cigar![(Match, 60), (Del, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"60^ACGT4",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMDDDDMMMM",
+			"--------------------------------------------------------------------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_cont_ins() {
+		/* continuous flag */
+		compare!(
+			cigar![(Match, 30), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"38",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+			"------------------------------I---"
+		);
+		compare!(
+			cigar![(Match, 60), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"68",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+			"------------------------------------------------------------I---"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_softclip() {
+		compare!(
+			cigar![(SoftClip, 10), (Match, 10)],
+			nucl!("ACGTACGTACGTACGTACGT"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMGMMMMM",
+			"----------"
+		);
+		compare!(
+			cigar![(Match, 10), (SoftClip, 10)],
+			nucl!("ACGTACGTACGTACGTACGT"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMAMMMMM",
+			"----------"
+		);
+		compare!(
+			cigar![(SoftClip, 10), (Match, 10), (SoftClip, 10)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTAC"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMGMMMMM",
+			"----------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_hardclip() {
+		compare!(
+			cigar![(HardClip, 10), (Match, 10)],
+			nucl!("GTACGTACGT"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMGMMMMM",
+			"----------"
+		);
+		compare!(
+			cigar![(Match, 10), (HardClip, 10)],
+			nucl!("ACGTACGTAC"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMAMMMMM",
+			"----------"
+		);
+		compare!(
+			cigar![(HardClip, 10), (Match, 10), (HardClip, 10)],
+			nucl!("GTACGTACGT"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMGMMMMM",
+			"----------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_head_del() {
+		compare!(
+			cigar![(Del, 4), (Match, 4)],
+			nucl!("ACGT"),
+			"^ACGT4",
+			Range { start: 0, end: 0 },
+			"DDDDMMMM",
+			"--------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_head_ins() {
+		compare!(
+			cigar![(Ins, 4), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"8",
+			Range { start: 0, end: 0 },
+			"MMMM",
+			"I---"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_tail_del() {
+		compare!(
+			cigar![(Match, 4), (Del, 4)],
+			nucl!("ACGT"),
+			"4^ACGT",
+			Range { start: 0, end: 0 },
+			"MMMMDDDD",
+			"--------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_tail_ins() {
+		compare!(
+			cigar![(Match, 4), (Ins, 4)],
+			nucl!("ACGTACGT"),
+			"8",
+			Range { start: 0, end: 0 },
+			"MMMM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_del_ins() {
+		/* not natural as CIGAR string but sometimes appear in real data */
+		compare!(
+			cigar![(Match, 4), (Del, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTGGGGACGT"),
+			"4^CCCC8",
+			Range { start: 0, end: 0 },
+			"MMMMDDDDMMMM",
+			"--------I---"
+		);
+		compare!(
+			cigar![(Match, 4), (Del, 4), (Ins, 4), (Del, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTGGGGAAAAACGT"),
+			"4^CCCC4^TTTT8",
+			Range { start: 0, end: 0 },
+			"MMMMDDDDDDDDMMMM",
+			"------------I---"		/* FIXME: insertion marker lost */
+		);
+	}
+
+	#[test]
+	fn test_udon_build_ins_del() {
+		/* also not natural */
+		compare!(
+			cigar![(Match, 4), (Ins, 4), (Del, 4), (Match, 4)],
+			nucl!("ACGTGGGGACGT"),
+			"8^CCCC4",
+			Range { start: 0, end: 0 },
+			"MMMMDDDDMMMM",
+			"------------"			/* insertion marker lost */
+		);
+		compare!(
+			cigar![(Match, 4), (Ins, 4), (Del, 4), (Ins, 4), (Del, 4), (Match, 4)],
+			nucl!("ACGTGGGGACGT"),
+			"8^CCCC4^AAAA4",
+			Range { start: 0, end: 0 },
+			"MMMMDDDDDDDDMMMM",
+			"----------------"		/* again, lost */
+		);
+	}
+
+	#[test]
+	fn test_udon_build_complex() {
+		compare!(
+			cigar![(SoftClip, 7), (Match, 4), (Ins, 1), (Match, 4), (Del, 1), (Match, 2), (Del, 7), (Match, 40), (HardClip, 15)],
+			nucl!("TTTTTTTACGTACGTACGACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"9^A2^ACGTACG4T9A0C0G23",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMDMMDDDDDDDMMMMAMMMMMMMMMGTAMMMMMMMMMMMMMMMMMMMMMMM",
+			"----I-----------------------------------------------------"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_match() {
+		compare!(
+			cigar![(Match, 8)],
+			nucl!("ACGTACGT"),
+			"8",
+			Range { start: 2, end: 6 },
+			"MMMM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_mismatch() {
+		compare!(
+			cigar![(Match, 8)],
+			nucl!("ACGTACGT"),
+			"4T3",
+			Range { start: 2, end: 6 },
+			"MMAM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_del() {
+		compare!(
+			cigar![(Match, 4), (Del, 1), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4^T4",
+			Range { start: 2, end: 7 },
+			"MMDMM",
+			"-----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_ins() {
+		compare!(
+			cigar![(Match, 4), (Ins, 1), (Match, 4)],
+			nucl!("ACGTACGTA"),
+			"9",
+			Range { start: 2, end: 6 },
+			"MMMM",
+			"--I-"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_cont_mismatch() {
+		/* mismatch on boundary */
+		compare!(
+			cigar![(Match, 34)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30T3",
+			Range { start: 30, end: 34 },
+			"GMMM",
+			"----"
+		);
+		compare!(
+			cigar![(Match, 64)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"60T3",
+			Range { start: 60, end: 64 },
+			"AMMM",
+			"----"
+		);
+
+		/* skip one */
+		compare!(
+			cigar![(Match, 34)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30T3",
+			Range { start: 31, end: 34 },
+			"MMM",
+			"---"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_cont_del() {
+		/* deletion on boundary */
+		compare!(
+			cigar![(Match, 30), (Del, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30^ACGT4",
+			Range { start: 30, end: 38 },
+			"DDDDMMMM",
+			"--------"
+		);
+		compare!(
+			cigar![(Match, 60), (Del, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"60^ACGT4",
+			Range { start: 60, end: 68 },
+			"DDDDMMMM",
+			"--------"
+		);
+
+		/* skip one */
+		compare!(
+			cigar![(Match, 30), (Del, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30^ACGT4",
+			Range { start: 31, end: 38 },
+			"DDDMMMM",
+			"-------"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_cont_ins() {
+		/* insertion on boundary */
+		compare!(
+			cigar![(Match, 30), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"38",
+			Range { start: 30, end: 34 },
+			"MMMM",
+			"I---"
+		);
+		compare!(
+			cigar![(Match, 60), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
+			"68",
+			Range { start: 60, end: 64 },
+			"MMMM",
+			"I---"
+		);
+		/* skip one */
+		compare!(
+			cigar![(Match, 30), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"38",
+			Range { start: 31, end: 34 },
+			"MMM",
+			"---"
+		);
+	}
+	#[test]
+	fn test_udon_decode_poll_match() {
+		/* test block polling */
+		compare!(
+			cigar![(Match, BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}", BLOCK_PITCH + 8),
+			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 6 },
+			"MMMMMMMM",
+			"--------"
+		);
+		compare!(
+			cigar![(Match, BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}", BLOCK_PITCH + 8),
+			Range { start: BLOCK_PITCH + 2, end: BLOCK_PITCH + 6 },
+			"MMMM",
+			"----"
+		);
+
+		/* longer */
+		compare!(
+			cigar![(Match, 21 * BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; 21 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}", 21 * BLOCK_PITCH + 8),
+			Range { start: 21 * BLOCK_PITCH - 2, end: 21 * BLOCK_PITCH + 6 },
+			"MMMMMMMM",
+			"--------"
+		);
+		compare!(
+			cigar![(Match, 21 * BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; 21 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}", 21 * BLOCK_PITCH + 8),
+			Range { start: 21 * BLOCK_PITCH + 2, end: 21 * BLOCK_PITCH + 6 },
+			"MMMM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_poll_mismatch() {
+		compare!(
+			cigar![(Match, BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}T3", BLOCK_PITCH + 4),
+			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 6 },
+			"MMMMMMAM",
+			"--------"
+		);
+		compare!(
+			cigar![(Match, BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}T3", BLOCK_PITCH + 4),
+			Range { start: BLOCK_PITCH + 2, end: BLOCK_PITCH + 6 },
+			"MMAM",
+			"----"
+		);
+
+		/* mismatch on block boundary */
+		compare!(
+			cigar![(Match, BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}T7", BLOCK_PITCH),
+			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 2 },
+			"MMAM",
+			"----"
+		);
+		/* mismatch right before block boundary */
+		compare!(
+			cigar![(Match, BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}T8", BLOCK_PITCH - 1),
+			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 2 },
+			"MAMM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_poll_mismatch_long() {
+		/* much longer */
+		compare!(
+			cigar![(Match, 321 * BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; 321 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}T3", 321 * BLOCK_PITCH + 4),
+			Range { start: 321 * BLOCK_PITCH - 2, end: 321 * BLOCK_PITCH + 6 },
+			"MMMMMMAM",
+			"--------"
+		);
+		compare!(
+			cigar![(Match, 321 * BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; 321 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}T3", 321 * BLOCK_PITCH + 4),
+			Range { start: 321 * BLOCK_PITCH + 2, end: 321 * BLOCK_PITCH + 6 },
+			"MMAM",
+			"----"
+		);
+		compare!(
+			cigar![(Match, 321 * BLOCK_PITCH + 8)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; 321 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}T7", 321 * BLOCK_PITCH),
+			Range { start: 321 * BLOCK_PITCH - 2, end: 321 * BLOCK_PITCH + 2 },
+			"MMAM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_poll_del() {
+		/* boundary on boundary */
+		compare!(
+			cigar![(Match, BLOCK_PITCH), (Del, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}^ACGT4", BLOCK_PITCH),
+			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 6 },
+			"MMDDDDMM",
+			"--------"
+		);
+		compare!(
+			cigar![(Match, BLOCK_PITCH), (Del, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}^ACGT4", BLOCK_PITCH),
+			Range { start: BLOCK_PITCH, end: BLOCK_PITCH + 6 },
+			"DDDDMM",
+			"------"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_poll_del2() {
+		/* over boundary */
+		compare!(
+			cigar![(Match, BLOCK_PITCH - 2), (Del, 4), (Match, 6)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}^ACGT6", BLOCK_PITCH - 2),
+			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 6 },
+			"DDDDMMMM",
+			"--------"
+		);
+		compare!(
+			cigar![(Match, BLOCK_PITCH - 2), (Del, 4), (Match, 6)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}^ACGT6", BLOCK_PITCH - 2),
+			Range { start: BLOCK_PITCH, end: BLOCK_PITCH + 6 },
+			"DDMMMM",
+			"------"
+		);
+		compare!(
+			cigar![(Match, BLOCK_PITCH - 2), (Del, 4), (Match, 6)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}^ACGT6", BLOCK_PITCH - 2),
+			Range { start: BLOCK_PITCH + 2, end: BLOCK_PITCH + 6 },
+			"MMMM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_poll_ins() {
+		/* boundary on boundary */
+		compare!(
+			cigar![(Match, BLOCK_PITCH - 2), (Ins, 4), (Match, 6)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}", BLOCK_PITCH + 8),
+			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 2 },
+			"MMMM",
+			"I---"
+		);
+		compare!(
+			cigar![(Match, BLOCK_PITCH - 2), (Ins, 4), (Match, 6)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
+			format!("{}", BLOCK_PITCH + 8),
+			Range { start: BLOCK_PITCH, end: BLOCK_PITCH + 4 },
+			"MMMM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins() {
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGT"),
+			"12",
+			4,
+			"ACGT"
+		);
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGT"),
+			"12",
+			3,
+			"*"
+		);
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGT"),
+			"12",
+			5,
+			"*"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins_double() {
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTGGGGACGT"),
+			"20",
+			8,
+			"GGGG"
+		);
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTGGGGACGT"),
+			"20",
+			7,
+			"*"
+		);
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTGGGGACGT"),
+			"20",
+			9,
+			"*"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins_head() {
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("CCCCACGTACGTACGT"),
+			"16",
+			0,
+			"CCCC"
+		);
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("CCCCACGTACGTACGT"),
+			"16",
+			1,
+			"*"
+		);
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("CCCCACGTGGGGACGT"),
+			"16",
+			4,
+			"GGGG"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins_poll() {
+		compare_ins!(
+			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
+			format!("{}", BLOCK_PITCH + 12),
+			BLOCK_PITCH + 4,
+			"ACGT"
+		);
+		compare_ins!(
+			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
+			format!("{}", BLOCK_PITCH + 12),
+			BLOCK_PITCH + 3,
+			"*"
+		);
+		compare_ins!(
+			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
+			format!("{}", BLOCK_PITCH + 12),
+			BLOCK_PITCH + 5,
+			"*"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins_double_poll() {
+		compare_ins!(
+			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 20),
+			BLOCK_PITCH + 8,
+			"GGGG"
+		);
+		compare_ins!(
+			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 20),
+			BLOCK_PITCH + 7,
+			"*"
+		);
+		compare_ins!(
+			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 20),
+			BLOCK_PITCH + 9,
+			"*"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins_double_poll2() {
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 20),
+			4,
+			"CCCC"
+		);
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 20),
+			BLOCK_PITCH - 4,
+			"TTTT"
+		);
+		compare_ins!(
+			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 20),
+			BLOCK_PITCH,
+			"GGGG"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins_head_double_poll() {
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 24),
+			0,
+			"GGGG"
+		);
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 24),
+			4,
+			"CCCC"
+		);
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 24),
+			BLOCK_PITCH - 4,
+			"TTTT"
+		);
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}", BLOCK_PITCH + 24),
+			BLOCK_PITCH,
+			"GGGG"
+		);
+	}
+
+	#[test]
+	fn test_udon_decode_query_ins_head_double_poll2() {
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 8), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGTACGT")),
+			format!("{}", BLOCK_PITCH + 28),
+			BLOCK_PITCH + 4,
+			"ACGT"
+		);
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 2), (Del, 4), (Match, 2), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
+			format!("{}^ACGT10", BLOCK_PITCH + 10),
+			BLOCK_PITCH + 4,
+			"GGGG"
+		);
+		compare_ins!(
+			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Del, 8), (Ins, 4), (Match, 4)],
+			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTGGGGACGT")),
+			format!("{}^ACGTACGT8", BLOCK_PITCH + 8),
+			BLOCK_PITCH + 4,
+			"GGGG"
+		);
+	}
 }
+
 
 
 
