@@ -17,13 +17,13 @@ https://samtools.github.io/hts-specs/
 #[macro_use]
 extern crate bitfield;
 
+use std::f64::consts::PI;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::{ size_of, transmute, forget };
-use std::ops::Range;
+use std::ops::{ Range, Add, Mul, AddAssign };
 use std::ptr::copy_nonoverlapping;
 use std::slice::{ Iter, IterMut, from_raw_parts, from_raw_parts_mut };
-use std::str::from_utf8;
 
 
 /* architecture-dependent stuffs */
@@ -39,8 +39,15 @@ use core::arch::aarch64::*;				/* requires nightly */
 #[allow(unused_imports)]				/* we need identifier `debug`, but it'll be aliased to println */
 extern crate log;
 
-#[cfg(test)]
-use std::println as debug;
+/*
+macro_rules! debug {
+	( $( $expr: expr ),* ) => ({
+		println!("[{}]")
+	});
+}
+*/
+// #[cfg(test)]
+// use std::println as debug;
 
 
 
@@ -140,12 +147,12 @@ enum CompressMark {
 #[repr(u32)]
 #[allow(dead_code)]
 enum Op {
-	MismatchA = CompressMark::Mismatch as u32 | 0x00,
-	MismatchC = CompressMark::Mismatch as u32 | 0x01,
-	MismatchG = CompressMark::Mismatch as u32 | 0x02,
-	MismatchT = CompressMark::Mismatch as u32 | 0x03,
-	Del       = 0x08,
-	Ins       = 0x10
+	MisA = CompressMark::Mismatch as u32 | 0x00,
+	MisC = CompressMark::Mismatch as u32 | 0x01,
+	MisG = CompressMark::Mismatch as u32 | 0x02,
+	MisT = CompressMark::Mismatch as u32 | 0x03,
+	Del  = 0x08,
+	Ins  = 0x10
 }
 
 
@@ -180,7 +187,91 @@ pub struct UdonPrecursor {
 	block: SlicePrecursor<Block>,
 	ins: SlicePrecursor<u8>
 }
-// assert_eq_size!(Udon, UdonPrecursor);
+
+
+/* Scaled rendering API
+
+
+*/
+#[derive(Copy, Clone, Debug)]
+pub struct UdonPalette {
+	/* all in (r, g, b, unused) form */
+	background:  [u8; 4],
+	del: [u8; 4],
+	ins: [u8; 4],
+	mismatch: [[u8; 4]; 4]
+}
+
+impl Default for UdonPalette {
+	fn default() -> UdonPalette {
+		UdonPalette {
+			background: [0x00, 0x00, 0x00, 0x00],
+			del: [0xff, 0xff, 0x22, 0x10],
+			ins: [0x22, 0xff, 0x22, 0x10],
+			mismatch: [
+				[0xcc, 0xcc, 0xff, 0x10],
+				[0xff, 0xff, 0x00, 0x10],
+				[0xff, 0x33, 0x99, 0x10],
+				[0x00, 0xff, 0x99, 0x10]
+			]
+		}
+	}
+}
+
+
+/* UdonUtils
+
+Provides utilities on ribbon (&mut [u32]): blending and gamma correction
+*/
+pub trait UdonUtils {
+	fn append_on_basecolor(&mut self, basecolor: [u8; 4]) -> &mut Self;
+	fn correct_gamma(&mut self) -> &mut Self;
+}
+
+impl UdonUtils for [u32] {
+
+	fn append_on_basecolor(&mut self, basecolor: [u8; 4]) -> &mut Self {
+		for x in self.iter_mut() {
+			let mut v = x.to_le_bytes();
+			for i in 0 .. 4 {
+				v[i] = basecolor[i] - v[i].min(basecolor[i]);
+			}
+			*x = u32::from_le_bytes(v);
+		}
+		self
+	}
+
+	fn correct_gamma(&mut self) -> &mut Self {
+		const GAMMA: [u8; 256] = [
+			  0,  12,  21,  28,  33,  38,  42,  46,  49,  52,  55,  58,  61,  63,  66,  68,
+			 70,  73,  75,  77,  79,  81,  83,  84,  86,  88,  90,  91,  93,  94,  96,  97,
+			 99, 100, 102, 103, 105, 106, 107, 109, 110, 111, 113, 114, 115, 116, 118, 119,
+			120, 121, 122, 123, 124, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+			137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 146, 147, 148, 149, 150, 151,
+			152, 153, 153, 154, 155, 156, 157, 158, 159, 159, 160, 161, 162, 163, 163, 164,
+			165, 166, 166, 167, 168, 169, 169, 170, 171, 172, 172, 173, 174, 175, 175, 176,
+			177, 178, 178, 179, 180, 180, 181, 182, 182, 183, 184, 184, 185, 186, 186, 187,
+			188, 188, 189, 190, 190, 191, 192, 192, 193, 194, 194, 195, 195, 196, 197, 197,
+			198, 199, 199, 200, 200, 201, 202, 202, 203, 203, 204, 205, 205, 206, 206, 207,
+			207, 208, 209, 209, 210, 210, 211, 211, 212, 213, 213, 214, 214, 215, 215, 216,
+			216, 217, 218, 218, 219, 219, 220, 220, 221, 221, 222, 222, 223, 223, 224, 224,
+			225, 226, 226, 227, 227, 228, 228, 229, 229, 230, 230, 231, 231, 232, 232, 233,
+			233, 234, 234, 235, 235, 236, 236, 237, 237, 238, 238, 238, 239, 239, 240, 240,
+			241, 241, 242, 242, 243, 243, 244, 244, 245, 245, 246, 246, 246, 247, 247, 248,
+			248, 249, 249, 250, 250, 251, 251, 252, 252, 252, 253, 253, 254, 254, 255, 255
+		];
+
+		for x in self.iter_mut() {
+			let mut v = x.to_le_bytes();
+			for i in 0 .. 4 {
+				v[i] = GAMMA[v[i] as usize];
+			}
+			*x = u32::from_le_bytes(v);
+		}
+		self
+	}
+}
+
 
 
 /* Precursor
@@ -265,7 +356,6 @@ impl<T: Sized + Copy + Default> Writer<T> for Vec<T> {
 	{
 		let base_offset = (self.len() + size_of::<U>() - 1) / size_of::<U>() * size_of::<U>();
 		let request_size = size_of::<U>() * count;
-		debug!("base_offset({}), request_size({})", base_offset, request_size);
 
 		/* extend array to hold requested count of U */
 		self.resize(base_offset + request_size, T::default());			/* can be mem::uninitialized() ? */
@@ -486,6 +576,473 @@ impl<'a> Iterator for OpsIter<'a> {
 	}
 }
 
+
+/* UdonScaler
+
+
+*/
+#[derive(Copy, Clone, Debug, Default)]
+struct Color {
+	v: [i32; 4]
+}
+
+impl From<&[u8; 4]> for Color {
+	fn from(val: &[u8; 4]) -> Color {
+		let mut x = Color::default();
+		for i in 0 .. 4 { x.v[i] = val[i] as i32; }
+		x
+	}
+}
+
+impl From<&Color> for [u8; 4] {
+	fn from(val: &Color) -> [u8; 4] {
+		let mut x: [u8; 4] = Default::default();
+		for i in 0 .. 4 {
+			x[i] = val.v[i].min(255).max(0) as u8;
+		}
+		x
+	}
+}
+
+impl From<&Color> for u32 {
+	fn from(val: &Color) -> u32 {
+		let mut x: [u8; 4] = Default::default();
+		for i in 0 .. 4 {
+			x[i] = val.v[i].min(255).max(0) as u8;
+		}
+		u32::from_le_bytes(x)
+	}
+}
+
+impl Add<Color> for Color {
+	type Output = Color;
+	fn add(self, other: Color) -> Color {
+		let mut x = self;
+		for i in 0 .. 4 { x.v[i] += other.v[i]; }
+		x
+	}
+}
+impl Mul<Color> for Color {
+	type Output = Color;
+	fn mul(self, other: Color) -> Color {
+		let mut x = self;
+		for i in 0 .. 4 {
+			/* upcast, multiply, then downcast. (expect pmuludq) */
+			let n = x.v[i] as i64 * other.v[i] as i64;
+			x.v[i] = (n>>24) as i32;		/* I expect this won't overflow but no guarantee */
+		}
+		x
+	}
+}
+
+impl Add<i32> for Color {
+	type Output = Color;
+	fn add(self, other: i32) -> Color {
+		let mut x = self;
+		for i in 0 .. 4 { x.v[i] += other; }
+		x
+	}
+}
+impl Mul<i32> for Color {
+	type Output = Color;
+	fn mul(self, other: i32) -> Color {
+		let mut x = self;
+		for i in 0 .. 4 {
+			let n = x.v[i] as i64 * other as i64;
+			x.v[i] = (n>>24) as i32;
+		}
+		x
+	}
+}
+
+/* arithmetic assign */
+impl AddAssign<Color> for Color {
+	fn add_assign(&mut self, other: Color) { *self = self.add(other); }
+}
+impl AddAssign<i32> for Color {
+	fn add_assign(&mut self, other: i32) { *self = self.add(other); }
+}
+
+
+/* UdonScaler second impl */
+#[derive(Default)]
+pub struct UdonScaler {
+	pitch: f64,
+	window: f64,
+	color: [Color; 12],
+	table: [Vec<i32>; 17]
+}
+
+fn sinc(rad: f64) -> f64 {
+	if !rad.is_normal() {
+		return 1.0;
+	}
+	rad.sin() / rad
+}
+
+fn sincx(x: f64, order: f64) -> f64 {
+	let rad = x * PI;
+	sinc(rad) * sinc((rad / order).max(-1.0).min(1.0))
+}
+
+impl UdonScaler {
+
+	/* column -> color index */
+	const INDEX: [u8; 32] = {
+		let mut index = [0; 32];
+		index[Op::MisA as usize] = 1;
+		index[Op::MisC as usize] = 2;
+		index[Op::MisG as usize] = 3;
+		index[Op::MisT as usize] = 4;
+		index[Op::Del as usize]  = 5;
+		index[Op::Ins as usize | Op::MisA as usize] = 6;
+		index[Op::Ins as usize | Op::MisC as usize] = 7;
+		index[Op::Ins as usize | Op::MisG as usize] = 8;
+		index[Op::Ins as usize | Op::MisT as usize] = 9;
+		index[Op::Ins as usize | Op::Del as usize]  = 10;
+		index
+	};
+	fn index(column: u8) -> usize {
+		assert!(column < 32, "{}", column);
+
+		Self::INDEX[column as usize] as usize
+	}
+
+	fn pick_color(&self, column: u8) -> Color {
+		self.color[Self::index(column)]
+	}
+
+	fn build_colortable(color: &UdonPalette) -> [Color; 12] {
+
+		let mismatch: [Color; 4] = [
+			Color::from(&color.mismatch[0]),
+			Color::from(&color.mismatch[1]),
+			Color::from(&color.mismatch[2]),
+			Color::from(&color.mismatch[3])
+		];
+		let del = Color::from(&color.del);
+		let ins = Color::from(&color.ins);
+		let bg  = Color::from(&color.background);
+
+		let mut x = [bg; 12];
+		x[Self::index(Op::MisA as u8)] = mismatch[0];
+		x[Self::index(Op::MisC as u8)] = mismatch[1];
+		x[Self::index(Op::MisG as u8)] = mismatch[2];
+		x[Self::index(Op::MisT as u8)] = mismatch[3];
+		x[Self::index(Op::Del as u8)]  = del;
+		x[Self::index(Op::Ins as u8 + Op::MisA as u8)] = ins * 0x800000 + mismatch[0] * 0x800000;
+		x[Self::index(Op::Ins as u8 + Op::MisC as u8)] = ins * 0x800000 + mismatch[1] * 0x800000;
+		x[Self::index(Op::Ins as u8 + Op::MisG as u8)] = ins * 0x800000 + mismatch[2] * 0x800000;
+		x[Self::index(Op::Ins as u8 + Op::MisT as u8)] = ins * 0x800000 + mismatch[3] * 0x800000;
+		x[Self::index(Op::Ins as u8 + Op::Del as u8)]  = ins * 0x800000 + del * 0x800000;
+
+		x
+	}
+
+	const WINDOW: f64 = 1.0;
+
+	pub fn new(color: &UdonPalette, columns_per_pixel: f64) -> UdonScaler {
+		let scale = columns_per_pixel.max(1.0);
+		let shoulder = 0.03125 / scale;
+
+		let mut x = UdonScaler {
+			pitch: columns_per_pixel,
+			window: (2.0 * Self::WINDOW) * scale / columns_per_pixel + 1.0,
+			color: Self::build_colortable(&color),
+			table: Default::default()
+		};
+
+		for i in 0 .. 17 {
+			let offset = i as f64 / 16.0;
+			let start = offset;
+			let end  = offset + 2.0 * Self::WINDOW * scale;
+			let span = end.ceil() as usize;
+
+			for j in 0 ..= span {
+
+				let center = offset + Self::WINDOW * scale;
+				let dist = center - j as f64;
+				let coef = 0.5 * (
+					  sincx((dist + shoulder) * scale / columns_per_pixel, Self::WINDOW)
+					+ sincx((dist - shoulder) * scale / columns_per_pixel, Self::WINDOW)
+				);
+				x.table[i].push((coef * 0x01000000 as f64) as i32);
+
+				debug!("j({}), center({}), dist({}), shoulder({}), coef({})", j, center, dist, shoulder, coef);
+			}
+			debug!("offset({}), window({}), range({:#.3}, {:#.3}), range({:#.3}, {:#.3}), {:?}", offset, x.window, start, end, start.floor() as i64, end.ceil() as i64, x.table[i]);
+		}
+		x
+	}
+
+	fn expected_size(&self, span: usize) -> usize {
+		(span as f64 / self.pitch) as usize + 2
+	}
+
+	fn init(&self, offset_in_pixels: f64) -> (f64, usize) {
+		let offset = offset_in_pixels * self.pitch;
+		let margin = (self.pitch * Self::WINDOW) as usize;
+		(offset, margin)
+	}
+
+	fn scale(&self, dst: &mut Vec<u32>, src: &[u8], offset: f64) -> Option<(f64, usize)> {
+
+		debug!("scale");
+
+		for i in 0 .. {
+			/*
+			offset := offset_in_columns
+			pitch  := columns_per_pixel
+			*/
+			let base = offset + (i as f64 * self.pitch);
+			let range = Range::<usize> {
+				start: base as usize,
+				end: (base + self.window).ceil() as usize
+			};
+			debug!("base({}), range({:?})", base, range);
+
+			if range.end > src.len() {
+				return Some((base.fract(), range.start));
+			}
+
+			let table = &self.table[(base.fract() * 16.0) as usize];
+			debug!("frac({}), {:?}", base.fract(), table);
+
+			let mut a = Color::default();
+			for (&coef, &column) in (&table).iter().zip((&src[range]).iter()) {
+				debug!("col({}), color({:?}), coef({})", column, self.pick_color(column), coef);
+				a += self.pick_color(column) * coef;
+			}
+			debug!("acc({:?})", a);
+			dst.push(u32::from(&a));
+		}
+
+		return None;
+	}
+}
+
+
+/*
+/* UdonScaler and its impl */
+struct UdonScaler {
+	accum: Color,
+	prev:  Color,
+	color: [Color; 12],
+	normalizer: u32
+}
+
+impl UdonScaler {
+
+	/* column -> color index */
+	const INDEX: [u8; 32] = {
+		let mut index = [0; 32];
+		index[Op::MisA as usize] = 1;
+		index[Op::MisC as usize] = 2;
+		index[Op::MisG as usize] = 3;
+		index[Op::MisT as usize] = 4;
+		index[Op::Del as usize]  = 5;
+		index[Op::Ins as usize | Op::MisA as usize] = 6;
+		index[Op::Ins as usize | Op::MisC as usize] = 7;
+		index[Op::Ins as usize | Op::MisG as usize] = 8;
+		index[Op::Ins as usize | Op::MisT as usize] = 9;
+		index[Op::Ins as usize | Op::Del as usize]  = 10;
+		index
+	};
+	fn index(column: u8) -> usize {
+		assert!(column < 32, "{}", column);
+
+		Self::INDEX[column as usize] as usize
+	}
+
+	/* fraction in margin -> coefficient */
+	const COEF: [u32; 33] = [
+		0x01000000,
+		0x00ff47f5,
+		0x00fd2228,
+		0x00f99580,
+		0x00f4ad63,
+		0x00ee7987,
+		0x00e70db5,
+		0x00de8179,
+		0x00d4efc8,
+		0x00ca7697,
+		0x00bf3666,
+		0x00b351bf,
+		0x00a6ecb7,
+		0x009a2c61,
+		0x008d3640,
+		0x00802fba,
+		0x00733d90,
+		0x00668354,
+		0x005a22e9,
+		0x004e3c09,
+		0x0042ebda,
+		0x00384c89,
+		0x002e74f8,
+		0x00257873,
+		0x001d6681,
+		0x00164ab8,
+		0x00102ca9,
+		0x000b0fdf,
+		0x0006f3e8,
+		0x0003d473,
+		0x0001a97f,
+		0x00006790,
+		0x00000000
+	];
+	fn coef(frac: f64) -> (u32, u32) {
+
+		/*
+		let index = (frac * 32.0) as usize;
+		assert!(index < 33, "frac({}), index({})", frac, index);
+
+		(Self::COEF[index], Self::COEF[32 - index])
+		*/
+
+		let coef = (0x01000000 as f64 * frac) as u32;
+		(coef, 0x01000000 - coef)
+
+	}
+
+
+	fn new(color: &UdonPalette, pitch: f64) -> Self {
+		// let normalizer = (0x01000000 as f64 * (pitch + 1.0).log(2.7) + 1.0) as u32;
+		let normalizer = (0x01000000 as f64 * pitch) as u32;
+		debug!("pitch({}), normalizer({})", pitch, (pitch + 1.0).log(2.7));
+
+		UdonScaler {
+			accum: Color::default(),
+			prev:  Color::default(),
+			normalizer: normalizer,
+			color: Self::build_colortable(&color)
+		}
+	}
+
+	fn build_colortable(color: &UdonPalette) -> [Color; 12] {
+
+		let mismatch: [Color; 4] = [
+			Color::from(&color.mismatch[0]),
+			Color::from(&color.mismatch[1]),
+			Color::from(&color.mismatch[2]),
+			Color::from(&color.mismatch[3])
+		];
+		let del = Color::from(&color.del);
+		let ins = Color::from(&color.ins);
+		let bg  = Color::from(&color.background);
+
+		let mut x = [bg; 12];
+		x[Self::index(Op::MisA as u8)] = mismatch[0];
+		x[Self::index(Op::MisC as u8)] = mismatch[1];
+		x[Self::index(Op::MisG as u8)] = mismatch[2];
+		x[Self::index(Op::MisT as u8)] = mismatch[3];
+		x[Self::index(Op::Del as u8)]  = del;
+		x[Self::index(Op::MisA as u8 + Op::Ins as u8)] = ins * 0x800000 + mismatch[0] * 0x800000;
+		x[Self::index(Op::MisC as u8 + Op::Ins as u8)] = ins * 0x800000 + mismatch[1] * 0x800000;
+		x[Self::index(Op::MisG as u8 + Op::Ins as u8)] = ins * 0x800000 + mismatch[2] * 0x800000;
+		x[Self::index(Op::MisT as u8 + Op::Ins as u8)] = ins * 0x800000 + mismatch[3] * 0x800000;
+		x[Self::index(Op::Del as u8 + Op::Ins as u8)]  = ins * 0x800000 + del * 0x800000;
+
+		debug!("{:?}", x);
+		x
+	}
+
+	fn accumulate(&mut self, column: u8) {
+		let color = &self.color[Self::index(column)];
+
+		/* let compiler vectorize this! */
+		self.accum += *color;
+
+		debug!("accumulate: color({:?}), accum({:?})", color, self.accum);
+
+		/* copy to save */
+		self.prev = *color;
+	}
+
+	fn interpolate(&mut self, column: u8, frac: f64) {
+
+		let curr     = &self.color[Self::index(column)];
+		let (c0, c1) = Self::coef(frac);
+
+		/* let compiler vectorize this!! */
+		self.accum += *curr     * c0;
+		self.accum += self.prev * c1;
+
+		debug!("interpolate: color({:?}, {:?}), frac({}), c({}, {}), accum({:?})", self.prev, curr, frac, c0, c1, self.accum);
+
+		/* copy to save */
+		self.prev = *curr;
+	}
+
+	fn flush(&mut self, dst: &mut Vec<u32>, cnt: usize) -> Option<()> {
+		assert!(cnt > 0, "{}", cnt);
+
+		/* I hope this conversions are automatically vectorized!!!! */
+		let body = u32::from(&self.prev);
+		let tail = u32::from(&(self.accum * self.normalizer));
+
+		debug!("flush: body({:?}), tail({:?})", self.prev, self.accum * self.normalizer);
+
+		for _ in 0 .. cnt - 1 { dst.push(body); }	/* broadcast for scale < 1.0 */
+		dst.push(tail);
+
+		/* clear all */
+		self.accum = Color::default();
+		return Some(());
+	}
+
+	fn scale(&mut self, dst: &mut Vec<u32>, src: &[u8], offset: f64, pitch: f64, margin: f64) -> Option<f64> {
+
+		/* returns new offset on success, None on failure */
+
+		debug!("offset({}), pitch({}), margin({})", offset, pitch, margin);
+		debug!("{:?}", src);
+
+		assert!(!(offset < 0.0));
+		assert!(pitch  > 0.0);
+		assert!(margin > 0.0);
+
+		let rev_pitch  = 1.0 / pitch;
+		let rev_margin = 1.0 / margin;
+		let mut last_bin = 0;
+		let mut dst = dst;
+
+		for (i, &column) in src.iter().enumerate() {
+			let pos = i as f64 + offset;
+			let bin = (pos * rev_pitch).floor();
+			let thresh = bin * pitch + 1.0;
+
+			debug!("i({}), pos({}), bin({}), frac({}), thresh({}), column({}), index({}), color({:?})", i, pos, bin, (pos - bin * pitch) * rev_margin, thresh, column, Self::index(column), &self.color[Self::index(column)]);
+
+			/* flush if needed */ {
+				let bin = bin as usize;
+				if bin != last_bin {
+					self.flush(&mut dst, bin - last_bin)?;
+				}
+				last_bin = bin;
+			}
+
+			/* do interpolation if on margin */
+			if pos < thresh {
+				/* relative position in margin: [0.0, 1.0) */
+				self.interpolate(column, (pos - bin * pitch) * rev_margin);
+				continue;
+			}
+
+			/* just accumulate otherwise */
+			self.accumulate(column);
+		}
+		self.flush(&mut dst, 1);
+
+		/* compute new offset */
+		let last_pos = src.len() as f64 + offset;
+		let last_bin = (last_pos / pitch).floor();
+		return Some(last_pos - last_bin * pitch);
+	}
+}
+*/
+
+
+
 #[cfg(test)]
 mod test_utils {
 	use crate::{ atoi_unchecked, isnum, PeekFold };
@@ -585,7 +1142,7 @@ fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], QueryClip)> {
 /* copy 4bit-encoded bases, for storing insertions */
 fn copy_packed_nucl(src: &[u8], dst: &mut [u8], ofs: usize, len: usize) {
 
-	debug!("{}, {}, {:?}", ofs, len, src);
+	// debug!("{}, {}, {:?}", ofs, len, src);
 
 	/* very very very very very very very very very naive way though fine */
 	for i in 0 .. len {
@@ -605,10 +1162,10 @@ fn copy_packed_nucl(src: &[u8], dst: &mut [u8], ofs: usize, len: usize) {
 			dst[i / 2] |= c<<4;
 		}
 
-		debug!("push {} at {}, ({}, {})", c, i, pos, src[pos / 2]);
+		// debug!("push {} at {}, ({}, {})", c, i, pos, src[pos / 2]);
 	}
 
-	debug!("{:?}", &dst[0 .. (len + 1) / 2]);
+	// debug!("{:?}", &dst[0 .. (len + 1) / 2]);
 }
 
 
@@ -633,7 +1190,7 @@ impl<'a, 'b> UdonBuilder<'a> {
 		let ofs = self.qofs;
 		self.qofs += 1;
 
-		debug!("qlen({}), ofs({})", self.query.len(), ofs);
+		// debug!("qlen({}), ofs({})", self.query.len(), ofs);
 		assert!(ofs / 2 < self.query.len(), "qlen({}), ofs({})", self.query.len(), ofs);
 
 		let c = self.query[ofs / 2];
@@ -662,7 +1219,9 @@ impl<'a, 'b> UdonBuilder<'a> {
 
 	/* make MD iterator peekable */
 	fn is_double_mismatch(&self) -> bool {
-		if self.mdstr.as_slice().len() < 2 {
+
+		/* if the last op is mismatch, MD string ends like "A0" */
+		if self.mdstr.as_slice().len() < 3 {
 			return false;
 		}
 		return self.mdstr.as_slice()[1] == '0' as u8;
@@ -673,7 +1232,7 @@ impl<'a, 'b> UdonBuilder<'a> {
 		assert!(marker    < 0x08);
 		assert!(match_len < 0x20);
 
-		debug!("len({}), marker({})", match_len, marker);
+		// debug!("push_op, len({}), marker({})", match_len, marker);
 
 		let op = (marker<<5) as u8 | match_len as u8;
 		// assert!(op != 0);
@@ -712,6 +1271,8 @@ impl<'a, 'b> UdonBuilder<'a> {
 			rem -= 3;
 		}
 
+		// debug!("eat_del, len({}), rem({})", len, rem);
+
 		assert!(rem > 0);
 		return Some(rem as u32);		/* remainder is concatenated to the next match into the next chunk */
 	}
@@ -725,10 +1286,10 @@ impl<'a, 'b> UdonBuilder<'a> {
 		let ofs = self.qofs;
 		let len = c.len() as usize;
 		self.qofs += len;
-		debug!("len({}), qofs({})", len, self.qofs);
+		// debug!("eat_ins, xrem({}), len({}), qofs({})", xrem, len, self.qofs);
 
 		self.save_ins(ofs, len);		/* use offset before forwarding */
-		return Some(xrem - len);		/* there might be remainder */
+		return Some(xrem);				/* there might be remainder */
 	}
 	fn eat_match(&mut self, xrem: usize, last_op: u32) -> Option<usize> {
 
@@ -745,23 +1306,23 @@ impl<'a, 'b> UdonBuilder<'a> {
 		let mut xrem = xrem + last_op as usize;		/* might continues from the previous cigar op, possibly insertion */
 		let mut op = last_op;						/* insertion, deletion, or mismatch */
 
-		debug!("eat_match, crem({}), xrem({})", crem, xrem);
+		// debug!("eat_match, crem({}), xrem({})", crem, xrem);
 
 		while xrem < crem {
 			/* xrem < crem indicates this op (cigar span) is interrupted by mismatch(es) at the middle */
 			self.push_match(xrem, op);
 			crem -= xrem;
-			debug!("mismatch?, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
+			// debug!("eat_match mismatch?, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
 
 			while self.is_double_mismatch() {
-				debug!("{:?}", from_utf8(self.mdstr.as_slice()));
+				// debug!("eat_match, crem({}), {:?}", crem, from_utf8(self.mdstr.as_slice()));
 
 				let c = self.next_base();
 				self.push_op(1, c);		/* this chunk contains only a single mismatch */
 				self.mdstr.nth(1)?;
 				crem -= 1;
 			}
-			debug!("{:?}", from_utf8(self.mdstr.as_slice()));
+			// debug!("eat_match, crem({}), {:?}", crem, from_utf8(self.mdstr.as_slice()));
 
 			op = self.next_base();		/* we only have a single mismatch remaining, will be combined to succeeding matches */
 			self.mdstr.nth(0)?;
@@ -772,14 +1333,14 @@ impl<'a, 'b> UdonBuilder<'a> {
 			*/
 			xrem = self.eat_md_eq() + 1;
 			self.qofs += xrem - 1;
-			debug!("updated xrem, crem({}), xrem({})", crem, xrem);
+			// debug!("eat_match, updated xrem, crem({}), xrem({})", crem, xrem);
 		}
 
 		self.push_match(crem, op);		/* tail match; length is the remainder of crem */
 		xrem      -= crem;
 		self.qofs -= xrem;
 
-		debug!("done, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
+		// debug!("eat_match, done, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
 		return Some(xrem);				/* nonzero if insertion follows */
 	}
 
@@ -813,7 +1374,7 @@ impl<'a, 'b> UdonBuilder<'a> {
 		be ignored by adding one more insertion.
 		*/
 		let c = self.peek_cigar()?;
-		debug!("c({}, {})", c.op(), c.len());
+		// debug!("c({}, {})", c.op(), c.len());
 		if c.op() == CigarOp::Ins as u32 {
 			xrem = self.eat_md_eq();
 
@@ -845,8 +1406,8 @@ impl<'a, 'b> UdonBuilder<'a> {
 			/* deletion-match pair */
 			loop {
 				let c = peek_or_break!(self);
-				debug!("c({}, {})", c.op(), c.len());
 				if c.op() != CigarOp::Del as u32 { break; }
+				// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar.as_slice().len());
 
 				/* the CIGAR ends with deletion; must be treated specially */
 				if self.cigar.as_slice().len() < 2 { break 'outer; }
@@ -854,18 +1415,16 @@ impl<'a, 'b> UdonBuilder<'a> {
 				/* push deletion-match pair, then parse next eq length */
 				let op = self.eat_del()?;
 				xrem = self.eat_md_eq();
-				debug!("op({}), xrem({})", op, xrem);
+				// debug!("eat_del done, op({}), xrem({})", op, xrem);
 				xrem = self.eat_match(xrem, op)?;
 			}
 
 			/* it's insertion-match pair when it appeared not be deletion-match */
 			let c = peek_or_break!(self);
-			debug!("c({}, {})", c.op(), c.len());
 			if c.op() != CigarOp::Ins as u32 {
 				return None;			/* if not, we regard it broken */
 			}
-
-			debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar.as_slice().len());
+			// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar.as_slice().len());
 
 			/* the CIGAR ends with insertion; must be treated specially */
 			if self.cigar.as_slice().len() < 2 { break 'outer; }
@@ -878,7 +1437,7 @@ impl<'a, 'b> UdonBuilder<'a> {
 		/* CIGAR ends with isolated insertion or deletion */
 		if self.cigar.as_slice().len() > 0 {
 			let c = self.peek_cigar()?;
-			debug!("c({}, {})", c.op(), c.len());
+			// debug!("c({}, {})", c.op(), c.len());
 
 			if c.op() == CigarOp::Del as u32 {
 				let op = self.eat_del()?;
@@ -904,7 +1463,6 @@ impl<'a, 'b> UdonBuilder<'a> {
 
 	/* construct index for blocks */
 	fn push_block(dst: &mut IterMut<Block>, ins_offset: usize, op_offset: usize, op_skip: usize) {
-		debug!("push_block: {}, {}, {}", ins_offset, op_offset, op_skip);
 
 		let bin = match dst.next() {
 			None => { return; },
@@ -922,12 +1480,10 @@ impl<'a, 'b> UdonBuilder<'a> {
 
 		/* rip buffer for disjoint ownership */
 		let buf = &mut self.buf;
-		debug!("{:?}", buf);
 
 		/* index for regular pitch on span */
 		let block_count = (ref_span + BLOCK_PITCH - 1) / BLOCK_PITCH;
 		let range = buf.reserve_to(block_count, |block: &mut [Block], base: &[u8]| {
-			debug!("{:?}", base);
 
 			/* src: both are &[u8] and placed within base */
 			let ops = (&base[op_range.start .. op_range.end]).iter_ops(0);
@@ -1007,7 +1563,6 @@ impl<'a> UdonPrecursor {
 	fn build_core(buf: Vec<u8>, cigar: &'a [Cigar], packed_query: &'a [u8], mdstr: &'a [u8]) -> (Vec<u8>, Option<UdonPrecursor>) {
 		/* save initial offset for unwinding */
 		let base_offset = buf.len();
-		debug!("{:?}", buf);
 
 		/* compose working variables */
 		let (cigar, qclip) = match strip_clips(cigar) {
@@ -1036,26 +1591,19 @@ impl<'a> UdonPrecursor {
 				Some(val) => val
 			}
 		}}
-		debug!("a");
 
 		/* parse input op array */
 		let op = unwrap_or_unwind!(state.parse_cigar());
 		let ref_span = state.calc_reference_span(&op);
-		debug!("op({:?}), ref_span({:?})", op, ref_span);
-		debug!("{:?}", state.buf);
 
 		/* pack ins vector */
 		let ins = unwrap_or_unwind!(state.pack_ins());
-		debug!("ins({:?})", ins);
-		debug!("{:?}", state.buf);
 
 		/* build index for op and ins arrays */
 		let block = unwrap_or_unwind!(state.build_index(ref_span, &op, &ins));
-		debug!("block({:?})", block);
 
 		/* everything done; compose precursor */
 		let precursor = state.finalize(ref_span, &op, &ins, &block);
-		debug!("done, precursor({:?})", precursor);
 
 		/* return back ownership of the buffer */
 		let buf = state.buf;
@@ -1214,39 +1762,41 @@ impl<'a, 'b> Udon<'a> {
 		self.ref_span
 	}
 
-	pub fn decode_into(&self, dst: &mut Vec<u8>, ref_span: &Range<usize>) -> Option<usize> {
-
-		/* check sanity of the span (range) and return None if broken */
+	pub fn decode_raw_into(&self, dst: &mut Vec<u8>, ref_span: &Range<usize>) -> Option<usize> {
 		self.check_span(&ref_span)?;
-
-		/* linear polling from block head, then decode until the end of the span */
-		let (ops, rem) = self.scan_op_array(ref_span.start);
-		let used = Self::decode_core(dst, ops, rem, ref_span.end - ref_span.start)?;
-		Some(used)
+		self.decode_core(dst, &ref_span)
 	}
 
-	pub fn decode(&self, ref_span: &Range<usize>) -> Option<Vec<u8>> {
-
-		/* check sanity of the span (range) and return None if broken */
+	pub fn decode_raw(&self, ref_span: &Range<usize>) -> Option<Vec<u8>> {
 		self.check_span(&ref_span)?;
 
 		let size = ref_span.end - ref_span.start;
 		let mut buf = Vec::<u8>::with_capacity(size);
 
-		let used = self.decode_into(&mut buf, &ref_span)?;
+		let used = self.decode_core(&mut buf, &ref_span)?;
 		buf.resize(used, 0);
 
 		return Some(buf);
 	}
 
-	#[allow(dead_code, unused_variables)]
-	pub fn decode_scaled_into(&self, dst: &mut Vec<u8>, ref_span: &Range<usize>, scale: f64) -> Option<usize> {
-		unimplemented!();
+	pub fn decode_scaled_into(&self, dst: &mut Vec<u32>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<usize> {
+		self.check_span(&ref_span)?;
+		self.decode_scaled_core(dst, &ref_span, offset_in_pixels, &scaler)
 	}
 
-	#[allow(dead_code, unused_variables)]
-	pub fn decode_scaled(&self, ref_span: &Range<usize>, scale: f64) -> Option<Vec<u8>> {
-		unimplemented!();
+	pub fn decode_scaled(&self, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<Vec<u32>> {
+		self.check_span(&ref_span)?;
+
+		let span = ref_span.end - ref_span.start;
+		let size = scaler.expected_size(span);
+		let mut buf = Vec::<u32>::with_capacity(size);
+		// debug!("ref_span({:?}), span({}), size({})", ref_span, span, size);
+
+		let used = self.decode_scaled_core(&mut buf, &ref_span, offset_in_pixels, &scaler)?;
+		buf.resize(used, 0);
+		// debug!("used({})", used);
+
+		return Some(buf);
 	}
 
 	const DEL_MASK: SimdAlignedU8 = {
@@ -1301,7 +1851,7 @@ impl<'a, 'b> Udon<'a> {
 		let next_ins     = if op_is_cont(op) { 0 } else { Op::Ins as u32 };	/* next ins will be masked if 0x1f */
 		let adjusted_len = op_len(op);
 
-		debug!("{:#x}, {:#x}, {:#x}, {:#x}", op>>5, ins, marker, op_len(op));
+		// debug!("{:#x}, {:#x}, {:#x}, {:#x}", op>>5, ins, marker, op_len(op));
 		// debug!("{}, {:?}", adjusted_len, transmute::<__m128i, [u8; 16]>(merged));
 
 		(adjusted_len, next_ins)
@@ -1312,7 +1862,14 @@ impl<'a, 'b> Udon<'a> {
 		(0, 0)
 	}
 
-	fn decode_core(dst: &mut Vec<u8>, ops: &[u8], offset: usize, len: usize) -> Option<usize> {
+	fn decode_core(&self, dst: &mut Vec<u8>, ref_span: &Range<usize>) -> Option<usize> {
+
+		/*
+		we suppose the ref_span is sane.
+		linear polling from block head, then decode until the end of the span
+		*/
+		let len = ref_span.end - ref_span.start;
+		let (ops, offset) = self.scan_op_array(ref_span.start);
 
 		/* working variables */
 		let mut buf: [u8; 96] = [0; 96];
@@ -1366,10 +1923,41 @@ impl<'a, 'b> Udon<'a> {
 		Some(len)
 	}
 
+	fn decode_scaled_core(&self, dst: &mut Vec<u32>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<usize> {
+
+		/* states (working variables) */
+		let (mut offset, margin) = scaler.init(offset_in_pixels);
+		let mut dst = dst;
+
+		/* buffer */
+		let bulk_size: usize = 4 * 1024;		/* 4KB */
+		let mut buf = Vec::<u8>::with_capacity(bulk_size + margin);
+		for _ in 0 .. margin { buf.push(0); }
+
+		for spos in ref_span.clone().step_by(bulk_size) {
+			/* decode a block */
+			self.decode_core(&mut buf, &Range::<usize> {
+				start: spos,
+				end:   ref_span.end.min(spos + bulk_size)
+			});
+
+			/* rescale to dst array, forward offset */
+			let (next_offset, used) = scaler.scale(&mut dst, &buf, offset)?;
+			offset = next_offset;
+
+			if used < buf.len() - used { continue; }
+
+			let (base, tail) = buf.split_at_mut(used);
+			let (base, _) = base.split_at_mut(tail.len());
+			base.copy_from_slice(tail);
+		}
+		Some(dst.len())
+	}
+
 	/* Check sanity of the span. If queried span (range) is out of the indexed one, return None */
 	fn check_span(&self, range: &Range<usize>) -> Option<()> {
 
-		debug!("span({}, {}), ref_span({})", range.start, range.end, self.ref_span);
+		// debug!("span({}, {}), ref_span({})", range.start, range.end, self.ref_span);
 
 		if range.end < range.start { return None; }
 		if range.end > self.ref_span { return None; }
@@ -1394,7 +1982,7 @@ impl<'a, 'b> Udon<'a> {
 			self.op[op_offset - 1]
 		};
 
-		debug!("pos({}), rem({}), skip({})", pos, block_rem, op_skip);
+		// debug!("pos({}), rem({}), skip({})", pos, block_rem, op_skip);
 		return (last_op, ops, block_rem + op_skip);
 	}
 
@@ -1411,7 +1999,7 @@ impl<'a, 'b> Udon<'a> {
 
 		/* get block head for this pos */
 		let (_, ops, rem) = self.fetch_ops_block(pos);
-		debug!("rem({}), ops({:?})", rem, ops);
+		// debug!("rem({}), ops({:?})", rem, ops);
 
 		/* linear polling */
 		let mut ops = ops.iter();
@@ -1423,7 +2011,7 @@ impl<'a, 'b> Udon<'a> {
 			return Some(len);
 		});
 
-		debug!("rem({}), ofs({})", rem, ofs);
+		// debug!("rem({}), ofs({})", rem, ofs);
 		return (ops.as_slice(), rem - ofs);		/* is this sound? (I'm not sure...) */
 	}
 
@@ -1433,20 +2021,15 @@ impl<'a, 'b> Udon<'a> {
 
 		let (last_op, ops, rem) = self.fetch_ops_block(pos);
 		let ins = self.fetch_ins_block(pos);
-		debug!("rem({}), ops({:?}), ins({:?}), last_op({})", rem, ops, ins, last_op);
 
 		/* linear polling on op array */
 		let mut ops = ops.iter();
-		let mut ins = InsTracker::new(last_op, ins);
-		let (len, count) = (&mut ops).peek_fold((0, 0), |(a, c), &x| {
+		let ins = InsTracker::new(last_op, ins);
+		let len = (&mut ops).peek_fold(0, |a, &x| {
 			let len = a + op_len(x);
-			debug!("a({}), len({}), rem({}), c({})", a, len, rem, c);
 			if len > rem { return None; }
-
-			let is_ins = ins.forward(x);
-			return Some((len, c + is_ins as usize));
+			return Some(len);
 		});
-		debug!("len({}), count({})", len, count);
 
 		/* if the length doesn't match, it indicates the column doesn't have insertion (so the query is wrong) */
 		if len < rem { return None; }
@@ -1473,7 +2056,7 @@ impl<'a, 'b> Udon<'a> {
 			}
 
 			let remove_tail = arr[arr.len() - 1] == 0;
-			debug!("{}, {}, {}, {:?}", ins.len(), arr.len(), remove_tail, arr);
+			// debug!("{}, {}, {}, {:?}", ins.len(), arr.len(), remove_tail, arr);
 
 			arr.len() - remove_tail as usize
 		});
@@ -1593,11 +2176,12 @@ impl Transcode for Udon<'_> {
 
 #[cfg(test)]
 mod test {
+	use arraytools::ArrayTools;
 	use std::ops::Range;
 	use std::str::from_utf8;
 
 	#[allow(unused_imports)]
-	use crate::{ Udon, UdonPrecursor, CigarOp, BLOCK_PITCH, encode_base_unchecked, decode_base_unchecked };
+	use crate::{ Udon, UdonPrecursor, CigarOp, UdonPalette, BLOCK_PITCH, encode_base_unchecked, decode_base_unchecked };
 
 	macro_rules! cigar {
 		[ $( ( $op: ident, $len: expr ) ),* ] => ({
@@ -1673,7 +2257,7 @@ mod test {
 			let n = $nucl;
 			let m = $mdstr;
 			let u = match Udon::build(&c, &n, &m.as_bytes()) {
-				None    => {
+				None => {
 					assert!(false, "failed to build index");
 					return;
 				},
@@ -1684,7 +2268,7 @@ mod test {
 				r.end = u.ref_span();
 			}
 
-			let a = u.decode(&r).unwrap();
+			let a = u.decode_raw(&r).unwrap();
 			let f = encode_flat!(&a);
 			let d = from_utf8(&f).unwrap();
 			assert!(d == $flat, "{:?}, {:?}", d, $flat);
@@ -1697,12 +2281,11 @@ mod test {
 
 	macro_rules! compare_ins {
 		( $cigar: expr, $nucl: expr, $mdstr: expr, $pos: expr, $ins_seq: expr ) => ({
-			// let v = Vec::<u8>::new();
 			let c = $cigar;
 			let n = $nucl;
 			let m = $mdstr;
 			let u = match Udon::build(&c, &n, &m.as_bytes()) {
-				None    => {
+				None => {
 					assert!(false, "failed to build index");
 					return;
 				},
@@ -1715,6 +2298,46 @@ mod test {
 			};
 			let i = from_utf8(&i).unwrap();
 			assert!(i == $ins_seq, "{:?}, {:?}", i, $ins_seq);
+		});
+	}
+
+	const BG: [u8; 4]   = [0x00, 0x00, 0x00, 0x00];
+	const DEL: [u8; 4]  = [0x00, 0x00, 0xff, 0x00];
+	const INS: [u8; 4]  = [0xff, 0x00, 0xff, 0x00];
+	const MISA: [u8; 4] = [0x7f, 0x1f, 0x1f, 0x00];
+	const MISC: [u8; 4] = [0x00, 0x00, 0xff, 0x00];
+	const MISG: [u8; 4] = [0x00, 0xff, 0x00, 0x00];
+	const MIST: [u8; 4] = [0xff, 0x00, 0x00, 0x00];
+
+	macro_rules! compare_color {
+		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr ) => ({
+			let c = $cigar;
+			let n = $nucl;
+			let m = $mdstr;
+			let u = match Udon::build(&c, &n, &m.as_bytes()) {
+				None => {
+					assert!(false, "failed to build index");
+					return;
+				},
+				Some(u) => u
+			};
+			let mut r: Range<usize> = $range;
+			if r.start == 0 && r.end == 0 {
+				r.end = u.ref_span();
+			}
+
+			let c = UdonPalette {
+				background: BG,
+				del: DEL,
+				ins: INS,
+				mismatch: [ MISA, MISC, MISG, MIST ]
+			};
+			let b = match u.decode_scaled(&r, $offset, $scale, &c) {
+				None    => Vec::<u32>::new(),
+				Some(v) => v
+			};
+			let n: Vec::<u32> = $ribbon.iter().map(|x| u32::from_le_bytes(*x)).collect();
+			assert!(b == n, "{:?}, {:?}", b, n);
 		});
 	}
 
@@ -1803,7 +2426,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Ins, 1), (Match, 4)],
 			nucl!("ACGTACGTA"),
-			"9",
+			"8",
 			Range { start: 0, end: 0 },
 			"MMMMMMMM",
 			"----I---"
@@ -1811,7 +2434,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Ins, 2), (Match, 4)],
 			nucl!("ACGTACGTAC"),
-			"10",
+			"8",
 			Range { start: 0, end: 0 },
 			"MMMMMMMM",
 			"----I---"
@@ -1894,7 +2517,7 @@ mod test {
 		compare!(
 			cigar![(Match, 30), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
-			"38",
+			"34",
 			Range { start: 0, end: 0 },
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
 			"------------------------------I---"
@@ -1902,7 +2525,7 @@ mod test {
 		compare!(
 			cigar![(Match, 60), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
-			"68",
+			"64",
 			Range { start: 0, end: 0 },
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
 			"------------------------------------------------------------I---"
@@ -1982,7 +2605,7 @@ mod test {
 		compare!(
 			cigar![(Ins, 4), (Match, 4)],
 			nucl!("ACGTACGT"),
-			"8",
+			"4",
 			Range { start: 0, end: 0 },
 			"MMMM",
 			"I---"
@@ -2006,7 +2629,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Ins, 4)],
 			nucl!("ACGTACGT"),
-			"8",
+			"4",
 			Range { start: 0, end: 0 },
 			"MMMM",
 			"----"
@@ -2019,7 +2642,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Del, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
-			"4^CCCC8",
+			"4^CCCC4",
 			Range { start: 0, end: 0 },
 			"MMMMDDDDMMMM",
 			"--------I---"
@@ -2027,7 +2650,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Del, 4), (Ins, 4), (Del, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTGGGGAAAAACGT"),
-			"4^CCCC4^TTTT8",
+			"4^CCCC0^TTTT4",		/* is this correct? */
 			Range { start: 0, end: 0 },
 			"MMMMDDDDDDDDMMMM",
 			"------------I---"		/* FIXME: insertion marker lost */
@@ -2040,7 +2663,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Ins, 4), (Del, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
-			"8^CCCC4",
+			"4^CCCC4",
 			Range { start: 0, end: 0 },
 			"MMMMDDDDMMMM",
 			"------------"			/* insertion marker lost */
@@ -2048,7 +2671,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Ins, 4), (Del, 4), (Ins, 4), (Del, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
-			"8^CCCC4^AAAA4",
+			"4^CCCC0^AAAA4",
 			Range { start: 0, end: 0 },
 			"MMMMDDDDDDDDMMMM",
 			"----------------"		/* again, lost */
@@ -2060,7 +2683,7 @@ mod test {
 		compare!(
 			cigar![(SoftClip, 7), (Match, 4), (Ins, 1), (Match, 4), (Del, 1), (Match, 2), (Del, 7), (Match, 40), (HardClip, 15)],
 			nucl!("TTTTTTTACGTACGTACGACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
-			"9^A2^ACGTACG4T9A0C0G23",
+			"8^A2^ACGTACG4T9A0C0G23",
 			Range { start: 0, end: 0 },
 			"MMMMMMMMDMMDDDDDDDMMMMAMMMMMMMMMGTAMMMMMMMMMMMMMMMMMMMMMMM",
 			"----I-----------------------------------------------------"
@@ -2108,7 +2731,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Ins, 1), (Match, 4)],
 			nucl!("ACGTACGTA"),
-			"9",
+			"8",
 			Range { start: 2, end: 6 },
 			"MMMM",
 			"--I-"
@@ -2166,7 +2789,7 @@ mod test {
 			"--------"
 		);
 
-		/* skip one */
+		/* skipping one */
 		compare!(
 			cigar![(Match, 30), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
@@ -2174,6 +2797,16 @@ mod test {
 			Range { start: 31, end: 38 },
 			"DDDMMMM",
 			"-------"
+		);
+
+		/* leaving one */
+		compare!(
+			cigar![(Match, 30), (Del, 4), (Match, 4)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30^ACGT4",
+			Range { start: 29, end: 33 },
+			"MDDD",
+			"----"
 		);
 	}
 
@@ -2183,7 +2816,7 @@ mod test {
 		compare!(
 			cigar![(Match, 30), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
-			"38",
+			"34",
 			Range { start: 30, end: 34 },
 			"MMMM",
 			"I---"
@@ -2191,7 +2824,7 @@ mod test {
 		compare!(
 			cigar![(Match, 60), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
-			"68",
+			"64",
 			Range { start: 60, end: 64 },
 			"MMMM",
 			"I---"
@@ -2200,7 +2833,7 @@ mod test {
 		compare!(
 			cigar![(Match, 30), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
-			"38",
+			"34",
 			Range { start: 31, end: 34 },
 			"MMM",
 			"---"
@@ -2369,7 +3002,7 @@ mod test {
 		compare!(
 			cigar![(Match, BLOCK_PITCH - 2), (Ins, 4), (Match, 6)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
-			format!("{}", BLOCK_PITCH + 8),
+			format!("{}", BLOCK_PITCH + 4),
 			Range { start: BLOCK_PITCH - 2, end: BLOCK_PITCH + 2 },
 			"MMMM",
 			"I---"
@@ -2377,7 +3010,7 @@ mod test {
 		compare!(
 			cigar![(Match, BLOCK_PITCH - 2), (Ins, 4), (Match, 6)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
-			format!("{}", BLOCK_PITCH + 8),
+			format!("{}", BLOCK_PITCH + 4),
 			Range { start: BLOCK_PITCH, end: BLOCK_PITCH + 4 },
 			"MMMM",
 			"----"
@@ -2389,21 +3022,21 @@ mod test {
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGT"),
-			"12",
+			"8",
 			4,
 			"ACGT"
 		);
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGT"),
-			"12",
+			"8",
 			3,
 			"*"
 		);
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGT"),
-			"12",
+			"8",
 			5,
 			"*"
 		);
@@ -2414,21 +3047,21 @@ mod test {
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTGGGGACGT"),
-			"20",
+			"12",
 			8,
 			"GGGG"
 		);
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTGGGGACGT"),
-			"20",
+			"12",
 			7,
 			"*"
 		);
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTGGGGACGT"),
-			"20",
+			"12",
 			9,
 			"*"
 		);
@@ -2439,21 +3072,21 @@ mod test {
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("CCCCACGTACGTACGT"),
-			"16",
+			"8",
 			0,
 			"CCCC"
 		);
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("CCCCACGTACGTACGT"),
-			"16",
+			"8",
 			1,
 			"*"
 		);
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("CCCCACGTGGGGACGT"),
-			"16",
+			"8",
 			4,
 			"GGGG"
 		);
@@ -2464,21 +3097,21 @@ mod test {
 		compare_ins!(
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
-			format!("{}", BLOCK_PITCH + 12),
+			format!("{}", BLOCK_PITCH + 8),
 			BLOCK_PITCH + 4,
 			"ACGT"
 		);
 		compare_ins!(
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
-			format!("{}", BLOCK_PITCH + 12),
+			format!("{}", BLOCK_PITCH + 8),
 			BLOCK_PITCH + 3,
 			"*"
 		);
 		compare_ins!(
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
-			format!("{}", BLOCK_PITCH + 12),
+			format!("{}", BLOCK_PITCH + 8),
 			BLOCK_PITCH + 5,
 			"*"
 		);
@@ -2489,21 +3122,21 @@ mod test {
 		compare_ins!(
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 20),
+			format!("{}", BLOCK_PITCH + 12),
 			BLOCK_PITCH + 8,
 			"GGGG"
 		);
 		compare_ins!(
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 20),
+			format!("{}", BLOCK_PITCH + 12),
 			BLOCK_PITCH + 7,
 			"*"
 		);
 		compare_ins!(
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 20),
+			format!("{}", BLOCK_PITCH + 12),
 			BLOCK_PITCH + 9,
 			"*"
 		);
@@ -2514,21 +3147,21 @@ mod test {
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 20),
+			format!("{}", BLOCK_PITCH + 4),
 			4,
 			"CCCC"
 		);
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 20),
+			format!("{}", BLOCK_PITCH + 4),
 			BLOCK_PITCH - 4,
 			"TTTT"
 		);
 		compare_ins!(
 			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 20),
+			format!("{}", BLOCK_PITCH + 4),
 			BLOCK_PITCH,
 			"GGGG"
 		);
@@ -2539,28 +3172,28 @@ mod test {
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 24),
+			format!("{}", BLOCK_PITCH + 4),
 			0,
 			"GGGG"
 		);
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 24),
+			format!("{}", BLOCK_PITCH + 4),
 			4,
 			"CCCC"
 		);
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 24),
+			format!("{}", BLOCK_PITCH + 4),
 			BLOCK_PITCH - 4,
 			"TTTT"
 		);
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}", BLOCK_PITCH + 24),
+			format!("{}", BLOCK_PITCH + 4),
 			BLOCK_PITCH,
 			"GGGG"
 		);
@@ -2571,24 +3204,57 @@ mod test {
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 8), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGTACGT")),
-			format!("{}", BLOCK_PITCH + 28),
+			format!("{}", BLOCK_PITCH + 8),
 			BLOCK_PITCH + 4,
 			"ACGT"
 		);
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 2), (Del, 4), (Match, 2), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}^ACGT10", BLOCK_PITCH + 10),
+			format!("{}^ACGT8", BLOCK_PITCH - 2),
 			BLOCK_PITCH + 4,
 			"GGGG"
 		);
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Del, 8), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTGGGGACGT")),
-			format!("{}^ACGTACGT8", BLOCK_PITCH + 8),
+			format!("{}^ACGTACGT4", BLOCK_PITCH - 4),
 			BLOCK_PITCH + 4,
 			"GGGG"
 		);
+	}
+
+	#[test]
+	fn test_udon_decode_scaled() {
+		compare_color!(
+			cigar![(Match, 4), (Del, 1), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4^A4",
+			Range { start: 0, end: 0 },
+			0.0, 1.0,
+			vec![BG, BG, BG, BG, DEL, BG, BG, BG, BG]
+		);
+
+		compare_color!(
+			cigar![(Match, 4), (Del, 1), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4^A4",
+			Range { start: 0, end: 0 },
+			0.0, 3.0,
+			vec![BG, DEL.map(|x| x / 3), BG]
+		);
+
+		/* we need more tests but how to do */
+		/*
+		compare_color!(
+			cigar![(Match, 9)],
+			nucl!("ACGTACGTA"),
+			"G0T0A0C0G0T0A0C0G",
+			Range { start: 0, end: 0 },
+			1.0 / 3.0, 1.5,
+			vec![BG, DEL.map(|x| x / 3), BG]
+		);
+		*/
 	}
 }
 
