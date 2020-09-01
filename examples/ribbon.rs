@@ -332,7 +332,7 @@ fn main() {
 			start: record.start() as usize,
 			end:   record.start() as usize + udon.ref_span()
 		};
-		if !window.has_overlap(&range) || range.len() < window.len() / 8 { continue; }
+		if !window.has_overlap(&range) /* || range.len() < window.len() / 8 */ { continue; }
 
 		/* compute local ranges */
 		let udon_range   = range.clip(&window).unwrap();
