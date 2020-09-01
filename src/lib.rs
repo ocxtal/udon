@@ -776,7 +776,7 @@ impl UdonScaler {
 			columns_per_pixel: columns_per_pixel,
 			window: scale.ceil() + 1.0,
 			offset: (scale.ceil() + 1.0) / 2.0,
-			normalizer: (0x01000000 as f64 / columns_per_pixel.log(1.2)) as i32,
+			normalizer: (0x01000000 as f64 / columns_per_pixel.log(1.2).max(1.0)) as i32,
 			color: Self::build_color_table(&color),
 			table: Default::default()
 		};
