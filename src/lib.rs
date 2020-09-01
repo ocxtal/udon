@@ -667,8 +667,9 @@ impl AddAssign<i32> for Color {
 /* UdonScaler second impl */
 #[derive(Default)]
 pub struct UdonScaler {
-	pitch: f64,
+	columns_per_pixel: f64,
 	window: f64,
+	offset: f64,
 	color: [Color; 12],
 	table: [Vec<i32>; 17]
 }
@@ -681,8 +682,15 @@ fn sinc(rad: f64) -> f64 {
 }
 
 fn sincx(x: f64, order: f64) -> f64 {
-	let rad = x * PI;
-	sinc(rad) * sinc((rad / order).max(-1.0).min(1.0))
+	sinc(PI * x) * sinc(PI * (x / order).max(-1.0).min(1.0))
+}
+
+fn clip(x: f64, window: f64) -> f64 {
+	if x > 0.0 {
+		return if x <  window { 0.0 } else { x - window };
+	} else {
+		return if x > -window { 0.0 } else { x + window };
+	}
 }
 
 impl UdonScaler {
@@ -712,7 +720,7 @@ impl UdonScaler {
 		self.color[Self::index(column)]
 	}
 
-	fn build_colortable(color: &UdonPalette) -> [Color; 12] {
+	fn build_color_table(color: &UdonPalette) -> [Color; 12] {
 
 		let mismatch: [Color; 4] = [
 			Color::from(&color.mismatch[0]),
@@ -741,63 +749,119 @@ impl UdonScaler {
 
 	const WINDOW: f64 = 1.0;
 
+	fn build_coef_table(v: &mut Vec<i32>, i: usize, scale: f64, pitch: f64, width: f64) {
+		let span = 2 * ((0.5 * scale).ceil() as usize);
+		let offset = (i as f64 - 8.0) / 16.0;
+
+		/* FIXME */
+		let center = pitch * pitch * offset + span as f64 / 2.0;
+
+		for j in 0 ..= span {
+			let dist = center - j as f64;
+			let coef = sincx(clip(dist, width) / pitch, Self::WINDOW);
+
+			/* FIXME */
+			let coef = coef.max(0.0);
+			v.push((0x01000000 as f64 * coef) as i32);
+		}
+	}
+
 	pub fn new(color: &UdonPalette, columns_per_pixel: f64) -> UdonScaler {
 		let scale = columns_per_pixel.max(1.0);
-		let shoulder = 0.03125 / scale;
+		let pitch = columns_per_pixel / scale;
+		let width = 0.5 * (scale - 1.0);
 
 		let mut x = UdonScaler {
-			pitch: columns_per_pixel,
-			window: (2.0 * Self::WINDOW) * scale / columns_per_pixel + 1.0,
-			color: Self::build_colortable(&color),
+			columns_per_pixel: columns_per_pixel,
+			window: scale.ceil() + 1.0,
+			offset: (scale.ceil() + 1.0) / 2.0,
+			color: Self::build_color_table(&color),
 			table: Default::default()
 		};
 
 		for i in 0 .. 17 {
-			let offset = i as f64 / 16.0;
-			let start = offset;
-			let end  = offset + 2.0 * Self::WINDOW * scale;
-			let span = end.ceil() as usize;
-
-			for j in 0 ..= span {
-
-				let center = offset + Self::WINDOW * scale;
-				let dist = center - j as f64;
-				let coef = 0.5 * (
-					  sincx((dist + shoulder) * scale / columns_per_pixel, Self::WINDOW)
-					+ sincx((dist - shoulder) * scale / columns_per_pixel, Self::WINDOW)
-				);
-				x.table[i].push((coef * 0x01000000 as f64) as i32);
-
-				debug!("j({}), center({}), dist({}), shoulder({}), coef({})", j, center, dist, shoulder, coef);
-			}
-			debug!("offset({}), window({}), range({:#.3}, {:#.3}), range({:#.3}, {:#.3}), {:?}", offset, x.window, start, end, start.floor() as i64, end.ceil() as i64, x.table[i]);
+			Self::build_coef_table(&mut x.table[i], i, scale, pitch, width);
 		}
 		x
 	}
 
+	/*
+	fn calc_coef(dist: f64, shoulder: f64, magnifier: f64) -> f64 {
+		let width = magnifier - 1.0;
+
+		if dist.abs() < magnifier / 4.0 {
+			return 1.0;
+		}
+		0.5 * (
+			  sincx((dist + shoulder) * magnifier, Self::WINDOW)
+			+ sincx((dist - shoulder) * magnifier, Self::WINDOW)
+		)
+	}
+
+	fn build_coef_table(v: &mut Vec<i32>, i: usize, magnifier: f64, shoulder: f64) {
+
+		// println!("columns_per_pixel({:?}), scale({:?}), width({:?}), shoulder({:?})", columns_per_pixel, scale, pitch - 1.0, shoulder);
+		let offset = i as f64 / 16.0;
+		let center = offset + Self::WINDOW * magnifier;
+
+		// let start = offset;
+		let end  = offset + 2.0 * Self::WINDOW * magnifier;
+		let span = end.ceil() as usize;
+
+		// let mut x = Vec::new();
+		for j in 0 ..= span {
+
+			let dist = center - j as f64;
+			let coef = Self::calc_coef(dist, shoulder, magnifier);
+			// v.push((j, dist, format!("{:#.3}", coef)));
+			v.push((0x01000000 as f64 * coef) as i32);
+		}
+		// println!("offset({:#.05}), center({:#.05}), r({:#.3}, {:#.3}), r({:#.3}, {:#.3}), {:?}", offset, center, start, end, start.floor() as i64, end.ceil() as i64, x);
+	}
+
+	pub fn new(color: &UdonPalette, columns_per_pixel: f64) -> UdonScaler {
+		let scale = columns_per_pixel.max(1.0);
+		let magnifier = scale / columns_per_pixel;
+
+		let mut x = UdonScaler {
+			columns_per_pixel: columns_per_pixel,
+			window: (2.0 * Self::WINDOW) * magnifier,
+			color: Self::build_color_table(&color),
+			table: Default::default()
+		};
+
+		for i in 0 .. 17 {
+			Self::build_coef_table(&mut x.table[i],
+				i, magnifier, 0.25 / columns_per_pixel
+			);
+		}
+		x
+	}
+	*/
+
 	fn expected_size(&self, span: usize) -> usize {
-		(span as f64 / self.pitch) as usize + 2
+		(span as f64 / self.columns_per_pixel) as usize + 2
 	}
 
 	fn init(&self, offset_in_pixels: f64) -> (f64, usize) {
-		let offset = offset_in_pixels * self.pitch;
-		let margin = (self.pitch * Self::WINDOW) as usize;
+		let offset = (offset_in_pixels + 0.5) * self.columns_per_pixel;
+		let margin = (offset + self.offset) as usize;
+		debug!("init, offset({}, {}), margin({})", offset, self.offset, margin);
+
 		(offset, margin)
 	}
 
 	fn scale(&self, dst: &mut Vec<u32>, src: &[u8], offset: f64) -> Option<(f64, usize)> {
 
-		debug!("scale");
-
+		debug!("scale, offset({})", offset);
 		for i in 0 .. {
 			/*
 			offset := offset_in_columns
-			pitch  := columns_per_pixel
 			*/
-			let base = offset + (i as f64 * self.pitch);
+			let base = offset + (i as f64 * self.columns_per_pixel);
 			let range = Range::<usize> {
 				start: base as usize,
-				end: (base + self.window).ceil() as usize
+				end: (base + self.window + 1.0).ceil() as usize
 			};
 			debug!("base({}), range({:?})", base, range);
 
@@ -914,11 +978,11 @@ impl UdonScaler {
 			accum: Color::default(),
 			prev:  Color::default(),
 			normalizer: normalizer,
-			color: Self::build_colortable(&color)
+			color: Self::build_color_table(&color)
 		}
 	}
 
-	fn build_colortable(color: &UdonPalette) -> [Color; 12] {
+	fn build_color_table(color: &UdonPalette) -> [Color; 12] {
 
 		let mismatch: [Color; 4] = [
 			Color::from(&color.mismatch[0]),
@@ -1936,10 +2000,14 @@ impl<'a, 'b> Udon<'a> {
 
 		for spos in ref_span.clone().step_by(bulk_size) {
 			/* decode a block */
-			self.decode_core(&mut buf, &Range::<usize> {
+			let used = self.decode_core(&mut buf, &Range::<usize> {
 				start: spos,
 				end:   ref_span.end.min(spos + bulk_size)
-			});
+			})?;
+			debug!("{:?}", &buf[margin ..]);
+			if used < bulk_size {
+				for _ in 0 .. margin + 1 { buf.push(0); }
+			}
 
 			/* rescale to dst array, forward offset */
 			let (next_offset, used) = scaler.scale(&mut dst, &buf, offset)?;
