@@ -1996,31 +1996,36 @@ impl<'a, 'b> Udon<'a> {
 		let (mut offset, margin) = scaler.init(offset_in_pixels);
 		let mut dst = dst;
 
+		// println!("offset({}), margin({})", offset, margin);
+
 		/* buffer */
-		let bulk_size: usize = 4 * 1024 * 1024;		/* 4KB */
+		let bulk_size: usize = 16 * 1024;		/* 16KB */
 		let mut buf = Vec::<u8>::with_capacity(bulk_size + margin);
 		for _ in 0 .. margin { buf.push(0); }
 
 		for spos in ref_span.clone().step_by(bulk_size) {
 			/* decode a block */
-			let used = self.decode_core(&mut buf, &Range::<usize> {
+			let decoded = self.decode_core(&mut buf, &Range::<usize> {
 				start: spos,
 				end:   ref_span.end.min(spos + bulk_size)
 			})?;
-			// println!("margin({}), len({}), used({})", margin, buf.len(), used);
-			if used < bulk_size {
+			if decoded < bulk_size {
 				for _ in 0 .. margin + 1 { buf.push(0); }
 			}
 
 			/* rescale to dst array, forward offset */
-			let (next_offset, used) = scaler.scale(&mut dst, &buf, offset)?;
+			let (next_offset, consumed) = scaler.scale(&mut dst, &buf, offset)?;
 			offset = next_offset;
+			if consumed < buf.len() - consumed { continue; }
 
-			if used < buf.len() - used { continue; }
-
-			let (base, tail) = buf.split_at_mut(used);
+			let (base, tail) = buf.split_at_mut(consumed);
 			let (base, _) = base.split_at_mut(tail.len());
 			base.copy_from_slice(tail);
+
+			let next_margin = base.len();
+			buf.resize(next_margin, 0);
+
+			// println!("margin({}), len({}), decoded({}), consumed({}), next_margin({})", margin, buf.len(), decoded, consumed, next_margin);
 		}
 		Some(dst.len())
 	}
