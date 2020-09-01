@@ -176,7 +176,7 @@ impl Pileup {
 		let right_blank = self.params.window.x.saturating_sub(ribbon.len() + horizontal_offset);
 		let ribbon_len  = self.params.window.x - (left_blank + right_blank);
 
-		println!("{:?}, {:?}, {:?}", left_blank, right_blank, ribbon_len);
+		// println!("{:?}, {:?}, {:?}", left_blank, right_blank, ribbon_len);
 
 		for _ in 0 .. self.params.ribbon.height {
 			/* left margin */
@@ -217,7 +217,7 @@ impl Pileup {
 		let output = File::create(filename).ok()?;
 		let encoder = PNGEncoder::new(output);
 
-		println!("{:?}, {:?}, {:?}, {:?}", self.total_width(), self.total_height(), self.height, self.buf.len());
+		// println!("{:?}, {:?}, {:?}, {:?}", self.total_width(), self.total_height(), self.height, self.buf.len());
 
 		encoder.encode(&self.buf,
 			self.total_width() as u32,
@@ -351,7 +351,7 @@ fn main() {
 
 		/* then pileup; break when buffer is full */
 		pileup.push(&ribbon, window_range.start);
-		debug!("{:?}, {:?}, {}, {:?}", udon_range, window_range, offset_in_pixels, ribbon);
+		// println!("{:?}, {:?}, {}", udon_range, window_range, offset_in_pixels);
 	}
 
 	/* done!!! */

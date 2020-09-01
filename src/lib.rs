@@ -1997,7 +1997,7 @@ impl<'a, 'b> Udon<'a> {
 		let mut dst = dst;
 
 		/* buffer */
-		let bulk_size: usize = 4 * 1024;		/* 4KB */
+		let bulk_size: usize = 4 * 1024 * 1024;		/* 4KB */
 		let mut buf = Vec::<u8>::with_capacity(bulk_size + margin);
 		for _ in 0 .. margin { buf.push(0); }
 
@@ -2007,7 +2007,7 @@ impl<'a, 'b> Udon<'a> {
 				start: spos,
 				end:   ref_span.end.min(spos + bulk_size)
 			})?;
-			debug!("{:?}", &buf[margin ..]);
+			// println!("margin({}), len({}), used({})", margin, buf.len(), used);
 			if used < bulk_size {
 				for _ in 0 .. margin + 1 { buf.push(0); }
 			}
