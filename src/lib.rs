@@ -670,6 +670,7 @@ pub struct UdonScaler {
 	columns_per_pixel: f64,
 	window: f64,
 	offset: f64,
+	normalizer: i32,
 	color: [Color; 12],
 	table: [Vec<i32>; 17]
 }
@@ -775,6 +776,7 @@ impl UdonScaler {
 			columns_per_pixel: columns_per_pixel,
 			window: scale.ceil() + 1.0,
 			offset: (scale.ceil() + 1.0) / 2.0,
+			normalizer: (0x01000000 as f64 / columns_per_pixel.log(1.2)) as i32,
 			color: Self::build_color_table(&color),
 			table: Default::default()
 		};
@@ -878,6 +880,7 @@ impl UdonScaler {
 				a += self.pick_color(column) * coef;
 			}
 			debug!("acc({:?})", a);
+			a = a * self.normalizer;
 			dst.push(u32::from(&a));
 		}
 
