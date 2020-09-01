@@ -322,7 +322,7 @@ fn main() {
 		let udon = Udon::build(
 			record.cigar().raw(),
 			record.sequence().raw(),
-			if let TagValue::String(s, _) = record.tags().get(b"MD").unwrap() { s } else {
+			if let Some(TagValue::String(s, _)) = record.tags().get(b"MD") { s } else {
 				panic!("Each BAM record must have MD string. Inspect `samtools calmd` for restoring missing MD strings.")
 			}
 		).expect("Failed to create udon index. Would be a bug.");
