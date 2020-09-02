@@ -40,7 +40,7 @@ Pileups with different scales, drawn by [ribbon.rs](https://github.com/ocxtal/ud
 
 ![15.625 columns / pixel](./fig/example.10000.png)
 
-*Figure1: 100 columns per 640 pixels (top) to 10,000 columns per 640 pixels.*
+*Figure1: 100 (top), 1000 (middle), 10000 (bottom) columns per 640 pixels.*
 
 ## Requirements
 
