@@ -180,7 +180,7 @@ fn copy_packed_nucl(src: &[u8], dst: &mut [u8], ofs: usize, len: usize) {
 			dst[i / 2] |= c<<4;
 		}
 
-		// debug!("push {} at {}, ({}, {})", c, i, pos, src[pos / 2]);
+		// println!("push {} at {}, ({}, {})", c, i, pos, src[pos / 2]);
 	}
 
 	// debug!("{:?}", &dst[0 .. (len + 1) / 2]);
@@ -259,7 +259,7 @@ impl<'a> Precursor {
 
 	#[allow(dead_code)]
 	pub unsafe fn build(buf: Vec<u8>, cigar: &'a [u32], packed_query: &'a [u8], mdstr: &'a [u8]) -> (Vec<u8>, Option<Precursor>) {
-		
+
 		/* for compatibility with bam streamed reader */
 		let cigar = transmute::<&'a [u32], &'a [Cigar]>(cigar);
 
@@ -337,8 +337,6 @@ impl<'a, 'b> UdonVec<'a, 'b> {
 		});
 
 		precursors.forget();
-		let 
-
 	}
 
 }
