@@ -18,11 +18,6 @@ use image::png::PNGEncoder;
 use udon::{ Udon, UdonScaler, UdonPalette, UdonUtils };
 
 
-/* logging */
-extern crate log;
-use log::debug;
-
-
 /* argument parsing */
 extern crate structopt;
 use structopt::StructOpt;
@@ -330,7 +325,7 @@ fn main() {
 		/* compose span, skip if out of the window */
 		let range = Range::<usize> {
 			start: record.start() as usize,
-			end:   record.start() as usize + udon.ref_span()
+			end:   record.start() as usize + udon.reference_span()
 		};
 		if !window.has_overlap(&range) /* || range.len() < window.len() / 8 */ { continue; }
 
