@@ -82,10 +82,11 @@ impl<'a, 'b> Index<'a> {
 
 		/* linear polling on op array */
 		let mut ops = ops.iter();
-		let ins = InsTracker::new(last_op, ins);
+		let mut ins = InsTracker::new(last_op, ins);
 		let len = (&mut ops).peek_fold(0, |a, &x| {
 			let len = a + op_len(x);
 			if len > rem { return None; }
+			ins.forward(x);
 			return Some(len);
 		});
 
