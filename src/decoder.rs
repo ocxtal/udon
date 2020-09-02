@@ -1,6 +1,6 @@
 
 
-use super::Op;
+use super::UdonOp;
 use super::utils::SimdAlignedU8;
 use super::op::{ CompressMark, op_len, op_marker, op_is_cont };
 use super::index::Index;
@@ -101,9 +101,9 @@ impl<'a, 'b> Index<'a> {
 
 	const DEL_MASK: SimdAlignedU8 = {
 		let mut x = [0u8; 16];
-		x[0] = Op::Del as u8;
-		x[1] = Op::Del as u8;
-		x[2] = Op::Del as u8;
+		x[0] = UdonOp::Del as u8;
+		x[1] = UdonOp::Del as u8;
+		x[2] = UdonOp::Del as u8;
 		SimdAlignedU8::new(&x)
 	};
 	const SCATTER_MASK: SimdAlignedU8 = {
@@ -148,7 +148,7 @@ impl<'a, 'b> Index<'a> {
 		compute forward length; 31 is "continuous marker"
 		rop-to-rop critical path length is 6
 		*/
-		let next_ins     = if op_is_cont(op) { 0 } else { Op::Ins as u32 };	/* next ins will be masked if 0x1f */
+		let next_ins     = if op_is_cont(op) { 0 } else { UdonOp::Ins as u32 };	/* next ins will be masked if 0x1f */
 		let adjusted_len = op_len(op);
 
 		// debug!("{:#x}, {:#x}, {:#x}, {:#x}", op>>5, ins, marker, op_len(op));

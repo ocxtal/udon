@@ -1,6 +1,6 @@
 
 
-use super::{ Op, UdonPalette };
+use super::{ UdonOp, UdonPalette };
 use std::f64::consts::PI;
 use std::ops::{ Range, Add, Mul, AddAssign };
 
@@ -137,16 +137,16 @@ impl Scaler {
 	/* column -> color index */
 	const INDEX: [u8; 32] = {
 		let mut index = [0; 32];
-		index[Op::MisA as usize] = 1;
-		index[Op::MisC as usize] = 2;
-		index[Op::MisG as usize] = 3;
-		index[Op::MisT as usize] = 4;
-		index[Op::Del as usize]  = 5;
-		index[Op::Ins as usize | Op::MisA as usize] = 6;
-		index[Op::Ins as usize | Op::MisC as usize] = 7;
-		index[Op::Ins as usize | Op::MisG as usize] = 8;
-		index[Op::Ins as usize | Op::MisT as usize] = 9;
-		index[Op::Ins as usize | Op::Del as usize]  = 10;
+		index[UdonOp::MisA as usize] = 1;
+		index[UdonOp::MisC as usize] = 2;
+		index[UdonOp::MisG as usize] = 3;
+		index[UdonOp::MisT as usize] = 4;
+		index[UdonOp::Del as usize]  = 5;
+		index[UdonOp::Ins as usize | UdonOp::MisA as usize] = 6;
+		index[UdonOp::Ins as usize | UdonOp::MisC as usize] = 7;
+		index[UdonOp::Ins as usize | UdonOp::MisG as usize] = 8;
+		index[UdonOp::Ins as usize | UdonOp::MisT as usize] = 9;
+		index[UdonOp::Ins as usize | UdonOp::Del as usize]  = 10;
 		index
 	};
 	fn index(column: u8) -> usize {
@@ -172,16 +172,16 @@ impl Scaler {
 		let bg  = Color::from(&color.background);
 
 		let mut x = [bg; 12];
-		x[Self::index(Op::MisA as u8)] = mismatch[0];
-		x[Self::index(Op::MisC as u8)] = mismatch[1];
-		x[Self::index(Op::MisG as u8)] = mismatch[2];
-		x[Self::index(Op::MisT as u8)] = mismatch[3];
-		x[Self::index(Op::Del as u8)]  = del;
-		x[Self::index(Op::Ins as u8 + Op::MisA as u8)] = ins * 0x800000 + mismatch[0] * 0x800000;
-		x[Self::index(Op::Ins as u8 + Op::MisC as u8)] = ins * 0x800000 + mismatch[1] * 0x800000;
-		x[Self::index(Op::Ins as u8 + Op::MisG as u8)] = ins * 0x800000 + mismatch[2] * 0x800000;
-		x[Self::index(Op::Ins as u8 + Op::MisT as u8)] = ins * 0x800000 + mismatch[3] * 0x800000;
-		x[Self::index(Op::Ins as u8 + Op::Del as u8)]  = ins * 0x800000 + del * 0x800000;
+		x[Self::index(UdonOp::MisA as u8)] = mismatch[0];
+		x[Self::index(UdonOp::MisC as u8)] = mismatch[1];
+		x[Self::index(UdonOp::MisG as u8)] = mismatch[2];
+		x[Self::index(UdonOp::MisT as u8)] = mismatch[3];
+		x[Self::index(UdonOp::Del as u8)]  = del;
+		x[Self::index(UdonOp::Ins as u8 + UdonOp::MisA as u8)] = ins * 0x800000 + mismatch[0] * 0x800000;
+		x[Self::index(UdonOp::Ins as u8 + UdonOp::MisC as u8)] = ins * 0x800000 + mismatch[1] * 0x800000;
+		x[Self::index(UdonOp::Ins as u8 + UdonOp::MisG as u8)] = ins * 0x800000 + mismatch[2] * 0x800000;
+		x[Self::index(UdonOp::Ins as u8 + UdonOp::MisT as u8)] = ins * 0x800000 + mismatch[3] * 0x800000;
+		x[Self::index(UdonOp::Ins as u8 + UdonOp::Del as u8)]  = ins * 0x800000 + del * 0x800000;
 
 		x
 	}

@@ -39,16 +39,9 @@ extern crate bitfield;
 #[macro_use]
 extern crate log;
 
-
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Udon<'o>(Index<'o>);
-
-/* Op
-
-Event for output (expanded) array.
-*/
+/* Event for output (expanded) array. */
 #[repr(u8)]
-enum Op {
+pub enum UdonOp {
 	MisA = 0x04 | 0x00,
 	MisC = 0x04 | 0x01,
 	MisG = 0x04 | 0x02,
@@ -56,6 +49,10 @@ enum Op {
 	Del  = 0x08,
 	Ins  = 0x10				/* may be OR-ed with the others */
 }
+
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Udon<'o>(Index<'o>);
 
 
 /* wrapping is unnecessary; to keep this file looks simple... */
@@ -1271,7 +1268,7 @@ mod test {
 			"4^A4",
 			Range { start: 0, end: 0 },
 			0.0, 1.0,
-			vec![BG, BG, BG, BG, DEL, BG, BG, BG, BG]
+			vec![BG, BG, BG, BG, DEL.map(|x| (x as f64 / 1.1) as u8), BG, BG, BG, BG]
 		);
 
 		compare_color!(
@@ -1280,7 +1277,7 @@ mod test {
 			"4^A4",
 			Range { start: 0, end: 0 },
 			0.0, 3.0,
-			vec![BG, DEL.map(|x| (x as f64 / 3.0f64.log(4.0 / 3.0)) as u8), BG]
+			vec![BG, DEL.map(|x| (x as f64 / (3.0f64.log(4.0 / 3.0) + 1.0 / 3.0)) as u8), BG]
 		);
 
 		/* we need more tests but how to do */
