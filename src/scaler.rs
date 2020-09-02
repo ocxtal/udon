@@ -2,7 +2,7 @@
 
 use super::{ UdonOp, UdonPalette };
 use std::f64::consts::PI;
-use std::ops::{ Range, Add, Mul, AddAssign };
+use std::ops::{ Range, Add, Sub, Mul, AddAssign };
 
 
 /* Scaler
@@ -55,6 +55,14 @@ impl From<&Color> for u32 {
 impl Add<Color> for Color {
 	type Output = Color;
 	fn add(self, other: Color) -> Color {
+		let mut x = self;
+		for i in 0 .. 4 { x.v[i] -= other.v[i]; }
+		x
+	}
+}
+impl Sub<Color> for Color {
+	type Output = Color;
+	fn sub(self, other: Color) -> Color {
 		let mut x = self;
 		for i in 0 .. 4 { x.v[i] += other.v[i]; }
 		x
@@ -161,15 +169,16 @@ impl Scaler {
 
 	fn build_color_table(color: &UdonPalette) -> [Color; 12] {
 
+		let ff = Color::from(&[0xff, 0xff, 0xff, 0xff]);
 		let mismatch: [Color; 4] = [
-			Color::from(&color.mismatch[0]),
-			Color::from(&color.mismatch[1]),
-			Color::from(&color.mismatch[2]),
-			Color::from(&color.mismatch[3])
+			ff - Color::from(&color.mismatch[0]),
+			ff - Color::from(&color.mismatch[1]),
+			ff - Color::from(&color.mismatch[2]),
+			ff - Color::from(&color.mismatch[3])
 		];
-		let del = Color::from(&color.del);
-		let ins = Color::from(&color.ins);
-		let bg  = Color::from(&color.background);
+		let del = ff - Color::from(&color.del);
+		let ins = ff - Color::from(&color.ins);
+		let bg  = ff - Color::from(&color.background);
 
 		let mut x = [bg; 12];
 		x[Self::index(UdonOp::MisA as u8)] = mismatch[0];
