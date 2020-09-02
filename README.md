@@ -59,7 +59,7 @@ impl<'i, 'o> Udon<'o> {
 }
 ```
 
-We expect `cigar`, `packed_query`, and `mdstr` are those parsed by [bam](https://docs.rs/bam/0.1.0/bam/) crate. See [example]() for the details.
+We expect `cigar`, `packed_query`, and `mdstr` are those parsed by [bam](https://docs.rs/bam/0.1.0/bam/) crate. See [example](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs) for the details.
 
 ### Retrieving metadata
 
