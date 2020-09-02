@@ -333,7 +333,7 @@ mod test {
 		});
 	}
 
-	const BG: [u8; 4]   = [0x00, 0x00, 0x00, 0x00];
+	const BG: [u8; 4]   = [0xff, 0xff, 0xff, 0xff];
 	const DEL: [u8; 4]  = [0x00, 0x00, 0xff, 0x00];
 	const INS: [u8; 4]  = [0xff, 0x00, 0xff, 0x00];
 	const MISA: [u8; 4] = [0x7f, 0x1f, 0x1f, 0x00];
@@ -342,7 +342,7 @@ mod test {
 	const MIST: [u8; 4] = [0xff, 0x00, 0x00, 0x00];
 
 	macro_rules! compare_color {
-		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr ) => ({
+		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr, $factor: expr ) => ({
 			let c = $cigar;
 			let n = $nucl;
 			let m = $mdstr;
@@ -371,7 +371,11 @@ mod test {
 				None    => Vec::<u32>::new(),
 				Some(v) => v
 			};
-			let n: Vec::<u32> = $ribbon.iter().map(|x| u32::from_le_bytes(*x)).collect();
+			let n: Vec::<u32> = $ribbon.iter().map(|x| {
+				let mut x = *x;
+				for i in 0 .. 4 { x[i] = ((0xff - x[i]) as f64 * $factor) as u8; }
+				u32::from_le_bytes(x)
+			}).collect();
 			// println!("{:?}, {:?}", b, n);
 			assert!(b == n, "{:?}, {:?}", b, n);
 		});
@@ -1268,7 +1272,8 @@ mod test {
 			"4^A4",
 			Range { start: 0, end: 0 },
 			0.0, 1.0,
-			vec![BG, BG, BG, BG, DEL.map(|x| (x as f64 / 1.1) as u8), BG, BG, BG, BG]
+			vec![BG, BG, BG, BG, DEL, BG, BG, BG, BG],
+			1.0 / 1.1
 		);
 
 		compare_color!(
@@ -1277,7 +1282,8 @@ mod test {
 			"4^A4",
 			Range { start: 0, end: 0 },
 			0.0, 3.0,
-			vec![BG, DEL.map(|x| (x as f64 / (3.0f64.log(4.0 / 3.0) + 1.0 / 3.0)) as u8), BG]
+			vec![BG, DEL, BG],
+			1.0 / (3.0f64.log(4.0 / 3.0) + 1.0 / 3.0)
 		);
 
 		/* we need more tests but how to do */

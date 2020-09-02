@@ -56,7 +56,7 @@ impl Add<Color> for Color {
 	type Output = Color;
 	fn add(self, other: Color) -> Color {
 		let mut x = self;
-		for i in 0 .. 4 { x.v[i] -= other.v[i]; }
+		for i in 0 .. 4 { x.v[i] += other.v[i]; }
 		x
 	}
 }
@@ -64,7 +64,7 @@ impl Sub<Color> for Color {
 	type Output = Color;
 	fn sub(self, other: Color) -> Color {
 		let mut x = self;
-		for i in 0 .. 4 { x.v[i] += other.v[i]; }
+		for i in 0 .. 4 { x.v[i] -= other.v[i]; }
 		x
 	}
 }
