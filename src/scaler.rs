@@ -209,12 +209,13 @@ impl Scaler {
 		let scale = columns_per_pixel.max(1.0);
 		let pitch = columns_per_pixel / scale;
 		let width = 0.5 * (scale - 1.0);
+		let normalizer = 1.0 / (columns_per_pixel.log(4.0 / 3.0).max(1.0) + columns_per_pixel / 10.0);
 
 		let mut x = Scaler {
 			columns_per_pixel: columns_per_pixel,
 			window: scale.ceil() + 1.0,
 			offset: (scale.ceil() + 1.0) / 2.0,
-			normalizer: (0x01000000 as f64 / columns_per_pixel.log(4.0 / 3.0).max(1.0)) as i32,
+			normalizer: (0x01000000 as f64 * normalizer) as i32,
 			color: Self::build_color_table(&color),
 			table: Default::default()
 		};
