@@ -1280,7 +1280,7 @@ mod test {
 			"4^A4",
 			Range { start: 0, end: 0 },
 			0.0, 3.0,
-			vec![BG, DEL.map(|x| x / 3), BG]
+			vec![BG, DEL.map(|x| (x as f64 / 3.0f64.log(4.0 / 3.0)) as u8), BG]
 		);
 
 		/* we need more tests but how to do */

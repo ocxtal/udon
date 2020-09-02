@@ -285,15 +285,15 @@ impl Scaler {
 
 	pub(super) fn init(&self, offset_in_pixels: f64) -> (f64, usize) {
 		let offset = (offset_in_pixels + 0.5) * self.columns_per_pixel;
-		let margin = (offset + self.offset) as usize;
-		debug!("init, offset({}, {}), margin({})", offset, self.offset, margin);
+		let margin = (/* offset + */self.offset) as usize;
+		// println!("init, offset({}, {}), margin({})", offset, self.offset, margin);
 
 		(offset, margin)
 	}
 
 	pub(super) fn scale(&self, dst: &mut Vec<u32>, src: &[u8], offset: f64) -> Option<(f64, usize)> {
 
-		debug!("scale, offset({})", offset);
+		// println!("scale, offset({})", offset);
 		for i in 0 .. {
 			/*
 			offset := offset_in_columns
