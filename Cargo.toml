@@ -6,7 +6,6 @@ authors = ["Hajime Suzuki <suzuki.hajime.s@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-arraytools = "0.1"
 bitfield = "0.13"
 log = "0.4"
 

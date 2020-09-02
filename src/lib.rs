@@ -205,7 +205,6 @@ impl UdonUtils for [u32] {
 
 #[cfg(test)]
 mod test {
-	use arraytools::ArrayTools;
 	use std::ops::Range;
 	use std::str::from_utf8;
 
