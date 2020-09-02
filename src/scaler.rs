@@ -303,21 +303,21 @@ impl Scaler {
 				start: base as usize,
 				end: (base + self.window + 1.0).ceil() as usize
 			};
-			debug!("base({}), range({:?})", base, range);
+			// println!("base({}), range({:?})", base, range);
 
 			if range.end > src.len() {
 				return Some((base.fract(), range.start));
 			}
 
 			let table = &self.table[(base.fract() * 16.0) as usize];
-			debug!("frac({}), {:?}", base.fract(), table);
+			// println!("frac({}), {:?}", base.fract(), table);
 
 			let mut a = Color::default();
 			for (&coef, &column) in (&table).iter().zip((&src[range]).iter()) {
-				debug!("col({}), color({:?}), coef({})", column, self.pick_color(column), coef);
+				// println!("col({}), color({:?}), coef({})", column, self.pick_color(column), coef);
 				a += self.pick_color(column) * coef;
 			}
-			debug!("acc({:?})", a);
+			// println!("acc({:?})", a);
 			a = a * self.normalizer;
 			dst.push(u32::from(&a));
 		}

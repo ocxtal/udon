@@ -227,7 +227,7 @@ mod test {
 	macro_rules! nucl {
 		( $st: expr ) => ({
 			let s = $st;
-			println!("{:?}", s);
+			// println!("{:?}", s);
 
 			let mut v = Vec::<u8>::new();
 			let mut a: u8 = 0;
@@ -375,6 +375,7 @@ mod test {
 				Some(v) => v
 			};
 			let n: Vec::<u32> = $ribbon.iter().map(|x| u32::from_le_bytes(*x)).collect();
+			// println!("{:?}, {:?}", b, n);
 			assert!(b == n, "{:?}, {:?}", b, n);
 		});
 	}
