@@ -212,7 +212,7 @@ impl Pileup {
 		let output = File::create(filename).ok()?;
 		let encoder = PngEncoder::new(output);
 
-		debug!("{:?}, {:?}, {:?}, {:?}", self.total_width(), self.total_height(), self.height, self.buf.len());
+		// debug!("{:?}, {:?}, {:?}, {:?}", self.total_width(), self.total_height(), self.height, self.buf.len());
 
 		encoder.encode(&self.buf[.. 3 * self.total_width() * self.total_height()],
 			self.total_width() as u32,
