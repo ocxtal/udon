@@ -206,46 +206,6 @@ impl UdonUtils for [u32] {
 }
 
 
-/* all the remainings are unittests */
-#[cfg(test)]
-mod test_utils {
-	use crate::{ atoi_unchecked, isnum, PeekFold };
-
-	macro_rules! test_atoi_unchecked_impl {
-		( $str: expr, $( $num: expr ),* ) => ({
-			let s = $str;
-			let mut it = s.as_bytes().iter();
-			$({
-				let n = atoi_unchecked(&mut it);
-				assert_eq!(n, $num);
-
-				(&mut it).peek_fold(0, |_, &x| { if isnum(x) { None } else { Some(0) } });
-			})*
-		})
-	}
-
-	#[test]
-	fn test_atoi_unchecked() {
-		test_atoi_unchecked_impl!("0", 0);
-		test_atoi_unchecked_impl!("10", 10);
-		test_atoi_unchecked_impl!("-10", 0);
-
-		/* the following also work tests for PeekFold iterator */
-		test_atoi_unchecked_impl!("10M11", 10, 11);
-		test_atoi_unchecked_impl!("X0M1X222222MMMMMMM1234XXXX", 0, 0, 1, 222222, 1234);
-	}
-
-	#[test]
-	fn test_isnum() {
-		/* trivial */
-		assert_eq!(isnum('0' as u8), true);
-		assert_eq!(isnum('9' as u8), true);
-		assert_eq!(isnum('-' as u8), false);
-		assert_eq!(isnum(' ' as u8), false);
-	}
-}
-
-
 #[cfg(test)]
 mod test {
 	use arraytools::ArrayTools;
@@ -253,7 +213,10 @@ mod test {
 	use std::str::from_utf8;
 
 	#[allow(unused_imports)]
-	use crate::{ Udon, UdonPrecursor, CigarOp, UdonPalette, BLOCK_PITCH, encode_base_unchecked, decode_base_unchecked };
+	use super::{ Udon, UdonPalette, UdonScaler };
+	use super::utils::{ encode_base_unchecked, decode_base_unchecked };
+	use super::op::CigarOp;
+	use super::index::BLOCK_PITCH;
 
 	macro_rules! cigar {
 		[ $( ( $op: ident, $len: expr ) ),* ] => ({
@@ -337,7 +300,7 @@ mod test {
 			};
 			let mut r: Range<usize> = $range;
 			if r.start == 0 && r.end == 0 {
-				r.end = u.ref_span();
+				r.end = u.reference_span();
 			}
 
 			let a = u.decode_raw(&r).unwrap();
@@ -395,16 +358,19 @@ mod test {
 			};
 			let mut r: Range<usize> = $range;
 			if r.start == 0 && r.end == 0 {
-				r.end = u.ref_span();
+				r.end = u.reference_span();
 			}
 
-			let c = UdonPalette {
-				background: BG,
-				del: DEL,
-				ins: INS,
-				mismatch: [ MISA, MISC, MISG, MIST ]
-			};
-			let b = match u.decode_scaled(&r, $offset, $scale, &c) {
+			let s = UdonScaler::new(
+				&UdonPalette {
+					background: BG,
+					del: DEL,
+					ins: INS,
+					mismatch: [ MISA, MISC, MISG, MIST ]
+				},
+				$scale
+			);
+			let b = match u.decode_scaled(&r, $offset, &s) {
 				None    => Vec::<u32>::new(),
 				Some(v) => v
 			};

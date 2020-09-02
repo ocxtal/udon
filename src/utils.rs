@@ -216,3 +216,43 @@ pub(super) fn decode_base_unchecked(c: u32) -> char {
 	}
 }
 
+
+/* all the remainings are unittests */
+#[cfg(test)]
+mod test_utils {
+	use super::{ PeekFold, atoi_unchecked, isnum };
+
+	macro_rules! test_atoi_unchecked_impl {
+		( $str: expr, $( $num: expr ),* ) => ({
+			let s = $str;
+			let mut it = s.as_bytes().iter();
+			$({
+				let n = atoi_unchecked(&mut it);
+				assert_eq!(n, $num);
+
+				(&mut it).peek_fold(0, |_, &x| { if isnum(x) { None } else { Some(0) } });
+			})*
+		})
+	}
+
+	#[test]
+	fn test_atoi_unchecked() {
+		test_atoi_unchecked_impl!("0", 0);
+		test_atoi_unchecked_impl!("10", 10);
+		test_atoi_unchecked_impl!("-10", 0);
+
+		/* the following also work tests for PeekFold iterator */
+		test_atoi_unchecked_impl!("10M11", 10, 11);
+		test_atoi_unchecked_impl!("X0M1X222222MMMMMMM1234XXXX", 0, 0, 1, 222222, 1234);
+	}
+
+	#[test]
+	fn test_isnum() {
+		/* trivial */
+		assert_eq!(isnum('0' as u8), true);
+		assert_eq!(isnum('9' as u8), true);
+		assert_eq!(isnum('-' as u8), false);
+		assert_eq!(isnum(' ' as u8), false);
+	}
+}
+
