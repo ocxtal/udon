@@ -24,7 +24,7 @@ while let Ok(true) = reader.read_into(&mut record) {
 	let decode_range = Range<usize> { start: 0, end: udon.reference_span() };
 	let mut ribbon = udon.decode_scaled(&decode_range, 0.0, &scaler).unwrap();
 
-	/* put forward / reverse color then do gamma correction */
+	/* put forward / reverse color then apply gamma correction */
 	ribbon.append_on_basecolor(base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
 
 	/* here we obtained alignment ribbon in RGBa8 format */
@@ -32,7 +32,7 @@ while let Ok(true) = reader.read_into(&mut record) {
 }
 ```
 
-Pileups with different scales, drawn by [an example CLI tool](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs):
+Pileups with different scales, drawn by [ribbon.rs](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs):
 
 ![0.15625 columns / pixel](./fig/example.100.png)
 
@@ -105,7 +105,7 @@ impl UdonUtils for [u32] {
 }
 ```
 
-`UdonScaler::new()` creates a constant pool for the scaled decoder. It takes color palette along with the scaling factor (columns / pixel constant). Each color in the palette is in (R, G, B, -) format where R comes first element (= placed at the LSB). The output color array of the scaled decoder contains **inverted sum** of the column colors, and **should be overlaid onto base color** using `append_on_basecolor`. Additionally it provides gamma correction function (gamma = 2.2) for direct use of the output array for plotting.
+`UdonScaler::new()` creates a constant pool for the scaled decoder. It takes color palette along with the scaling factor (columns / pixel constant). Each color in the palette is in (R, G, B, -) format where R comes first element (= placed at the LSB). The output color array of the scaled decoder contains **negated sum** of the column colors, and **should be overlaid onto base color** using `append_on_basecolor`. Additionally it provides gamma correction function (gamma = 2.2) for direct use of the output array for plotting.
 
 ### Querying insertion
 
@@ -133,9 +133,9 @@ Op is designed for fastest decompression and smallest footprint. Actual op struc
   * **0b100 - 0b111** represent **mismatch**, it encodes a single base on query. Value 0x04 to 0x07 represent 'A', 'C', 'G', and 'T', respectively.
 * **Total span** is the reference sequence length that are covered by the chunk, including the leading event(s). Lower 5-bit is assinged to the field, expressing 0 to 30 columns. The value 31 is a special value for "continuing match", where its actual length is 30 and match events continue to the next chunk without any insertion, deletion, or mismatch. The value zero only appears when an insertion is followed by a mismatch or deletion.
 
+![Transcoding process and Op structure](./fig/udon.op.svg)
 
-
-*Figure 1. Illustration of compression: the original (flat) augumented CIGAR string is divided into chunks, and each chunk is encoded as an op, a pair of leading event and total span.*
+*Figure 2. Illustration of compression: the original (flat) augumented CIGAR string, built from alignment, is divided into chunks, and each chunk is encoded as an op, a pair of leading event and total span.*
 
 ### Expanding ops into ribbon
 
