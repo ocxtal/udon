@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use bam::{ BamReader, Record, RecordReader };
 use bam::record::tags::{ TagValue };
 use image::ColorType;
-use image::png::PNGEncoder;
+use image::png::PngEncoder;
 use udon::{ Udon, UdonScaler, UdonPalette, UdonUtils };
 
 
@@ -210,11 +210,11 @@ impl Pileup {
 
 	fn render(&self, filename: &PathBuf) -> Option<()> {
 		let output = File::create(filename).ok()?;
-		let encoder = PNGEncoder::new(output);
+		let encoder = PngEncoder::new(output);
 
-		// println!("{:?}, {:?}, {:?}, {:?}", self.total_width(), self.total_height(), self.height, self.buf.len());
+		debug!("{:?}, {:?}, {:?}, {:?}", self.total_width(), self.total_height(), self.height, self.buf.len());
 
-		encoder.encode(&self.buf,
+		encoder.encode(&self.buf[.. 3 * self.total_width() * self.total_height()],
 			self.total_width() as u32,
 			self.total_height() as u32,
 			ColorType::Rgb8
