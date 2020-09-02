@@ -28,7 +28,7 @@ while let Ok(true) = reader.read_into(&mut record) {
 	ribbon.append_on_basecolor(base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
 
 	/* here we obtained alignment ribbon in RGBa8 format */
-  do_something_with(ribbon);
+	do_something_with(ribbon);
 }
 ```
 
