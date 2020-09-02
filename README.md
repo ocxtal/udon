@@ -1,12 +1,13 @@
 # Udon — caching BAM CIGAR strings for visualization
 
-**Udon** is a tiny library transcoding [BAM CIGAR / MD strings](xxx) and query sequence into a single augumented compressed CIGAR object. The augumented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit/column compression density and ~2G columns/sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
+**Udon** is a tiny library transcoding [BAM CIGAR / MD strings](https://samtools.github.io/hts-specs/) and query sequence into a single augumented compressed CIGAR object. The augumented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit/column compression density and ~2G columns/sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
 
 ## Examples
 
 ```Rust
-/* prepare scaler; 10 columns (bases) per pixel */
+/* prepare scaler and color palette (10 columns (bases) per pixel) */
 let scaler = UdonScaler::new(&UdonPalette::default(), 10.0);
+let base_color: [[u8; 4]; 2] = [[255, 191, 191, 0], [191, 191, 255, 0]];
 
 /* for each alignment... */
 let mut record = Record::new();
@@ -27,22 +28,19 @@ while let Ok(true) = reader.read_into(&mut record) {
 	ribbon.append_on_basecolor(base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
 
 	/* here we obtained alignment ribbon in RGBa8 format */
+  do_something_with(ribbon);
 }
 ```
 
-Pileups with different scales, drawn by [an example CLI tool]():
+Pileups with different scales, drawn by [an example CLI tool](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs):
 
+![0.15625 columns / pixel](./fig/example.100.png)
 
+![1.5625 columns / pixel](./fig/example.1000.png)
 
-*0.1 columns / pixel*
+![15.625 columns / pixel](./fig/example.10000.png)
 
-
-
-*10 columns / pixel*
-
-
-
-*1000 columns / pixel*
+*Figure1: 100 columns per 640 pixels (top) to 10,000 columns per 640 pixels.*
 
 ## Requirements
 
