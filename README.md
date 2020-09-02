@@ -1,6 +1,6 @@
 # Udon — caching BAM CIGAR strings for visualization
 
-**Udon** is a tiny library transcoding [BAM CIGAR / MD strings](https://samtools.github.io/hts-specs/) and query sequence into a single augumented compressed CIGAR object. The augumented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit/column compression density and ~2G columns/sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
+**Udon** is a tiny library transcoding [BAM CIGAR / MD strings](https://samtools.github.io/hts-specs/) and query sequence into a single augmented compressed CIGAR object. The augmented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit/column compression density and ~2G columns/sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
 
 ## Examples
 
@@ -117,11 +117,11 @@ impl<'o> Udon<'o> {
 
 Returns inserted sequence at `UdonOp::Ins` position. Output sequence is encoded in ASCII.
 
-## Augumented CIGAR string: format and decompression algorithm
+## Augmented CIGAR string: format and decompression algorithm
 
-Udon constructs an "augumented CIGAR string" from the original BAM CIGAR, MD tag, and query-side sequence. The augumented CIGAR string is an extension of the original CIGAR string that explicitly expresses query-side bases at mismatch and insertion positions so that bases different or missing from the reference sequence are not lost.
+Udon constructs an "augmented CIGAR string" from the original BAM CIGAR, MD tag, and query-side sequence. The augmented CIGAR string is an extension of the original CIGAR string that explicitly expresses query-side bases at mismatch and insertion positions so that bases different or missing from the reference sequence are not lost.
 
-Udon uses a run-length encoding to keep the augumented CIGAR string in a compressed way. Up to thirty "events" of match, mismatch, insertion, or deletion are packed into a single byte, called "op." The series of events packed into a single op is called "chunk."
+Udon uses a run-length encoding to keep the augmented CIGAR string in a compressed way. Up to thirty "events" of match, mismatch, insertion, or deletion are packed into a single byte, called "op." The series of events packed into a single op is called "chunk."
 
 ### Op structure
 
@@ -135,7 +135,7 @@ Op is designed for fastest decompression and smallest footprint. Actual op struc
 
 ![Transcoding process and Op structure](./fig/udon.op.svg)
 
-*Figure 2. Illustration of compression: the original (flat) augumented CIGAR string, built from alignment, is divided into chunks, and each chunk is encoded as an op, a pair of leading event and total span.*
+*Figure 2. Illustration of compression: the original (flat) augmented CIGAR string, built from alignment, is divided into chunks, and each chunk is encoded as an op, a pair of leading event and total span.*
 
 ### Expanding ops into ribbon
 
