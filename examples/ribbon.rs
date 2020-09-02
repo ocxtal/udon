@@ -327,11 +327,13 @@ fn main() {
 			start: record.start() as usize,
 			end:   record.start() as usize + udon.reference_span()
 		};
-		if !window.has_overlap(&range) /* || range.len() < window.len() / 8 */ { continue; }
+		if !window.has_overlap(&range) { continue; }
 
 		/* compute local ranges */
 		let udon_range   = range.clip(&window).unwrap();
 		let window_range = window.clip(&range).unwrap();
+		if 3 * window_range.len() < window.len() { continue; }
+
 		let (window_range, offset_in_pixels) = window_range.scale(pixels_per_column);
 
 		/* slice ribbon scaled */
