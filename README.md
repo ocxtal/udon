@@ -21,7 +21,7 @@ while let Ok(true) = reader.read_into(&mut record) {
 	let udon = Udon::build(&cigar, &query, &mdstr).unwrap();
 
 	/* slice ribbon scaled */
-	let decode_range = Range<usize> { start: 0, end: udon.reference_span() };
+	let decode_range = Range::<usize> { start: 0, end: udon.reference_span() };
 	let mut ribbon = udon.decode_scaled(&decode_range, 0.0, &scaler).unwrap();
 
 	/* put forward / reverse color then apply gamma correction */
