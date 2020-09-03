@@ -1,6 +1,6 @@
 # Udon — caching BAM CIGAR strings for visualization
 
-**Udon** is a tiny library transcoding [BAM CIGAR / MD strings](https://samtools.github.io/hts-specs/) and query sequence into a single augmented compressed CIGAR object. The augmented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit/column compression density and ~2G columns/sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
+**Udon** is a tiny library transcoding [BAM CIGAR / MD strings](https://samtools.github.io/hts-specs/) and query sequence into a single augmented compressed CIGAR object. The augmented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit / column compression density and ~2G columns / sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
 
 ## Examples
 
