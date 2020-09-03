@@ -45,9 +45,9 @@ Pileups with different scales, drawn by [ribbon.rs](https://github.com/ocxtal/ud
 ## Requirements
 
 * Rust >= **1.33.0**
-* **x86\_64** with SSE4.2 / AVX2 or **AArch64** with NEON
+* **x86\_64** with SSE4.2 / AVX2
 
-*Notes: **1**. The library is not yet published to crates.io. You would need to tell cargo to fetch it directly from github.com as `udon = "github.com/ocxtal/udon.git"`. See [Cargo.toml documentation](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories) for the details. **2.** Nightly toolchain is required for AArch64 target.*
+*Note: The library is not yet published to crates.io. You would need to tell cargo to fetch it directly from github.com as `udon = "github.com/ocxtal/udon.git"`. See [Cargo.toml documentation](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories) for the details.*
 
 ## APIs
 
@@ -152,6 +152,19 @@ Since the two procedures are independent, they are executed without waiting for 
 
 Scaling of alignment ribbon is essential for visualization. Udon provides unified decomression-and-scaling API that require no external intermediate buffer. The implementation is quite straightforward; it divides the queried range into multiple constant-length subranges (16 KB by default), and apply decompression and scaling procedures one by one using a single intermediate buffer. The default subrange length was determined so that the buffer won't spill out of the last-level (L3) data cache. Everything done on L3 cache, the conversion throughput won't be impaired.
 
+## First impression on writing SIMD codes in Rust (2020/9)
+
+This is my study project writing SIMD-intensive, optimized code in stable Rust. My first impression was that it was reasonably easy writing lean data structures and algorithms when I learned basic syntax of Rust (though compiler often complains lifetimes don't match). Composing and refactoring control flows was basically the same feel as in C, and sometimes Rust-specific syntax, such as `if let`, `while let`, and `break 'label`, made it a bit easier.
+
+However, I feel it somewhat difficult tuning Rust codes than C for now. It's largely because I'm not familiar with compiler options yet. But I also found compiler sometimes messes up main control flow and error handling paths, and places not-so-important paths among intensive blocks. It was easy in C compilers deal with such phenomenon, but seems not in Rust (due to thick abstraction layers?). I don't have a good answer to this yet, but at least I'm sure `alias rustc-asm=rustc -C opt-level=3 -C target-cpu=native --crate-type lib --emit asm` was useful digging deeper into the compiler behavior.
+
+It was pretty comfotable writing x86\_64 SIMD codes in Rust. Thanks to the community, `core::arch::x86_64` is well maintained. I also found it really good having some methods such as `count_ones`, `trailing_zeros`, and `from_le_bytes` by default on primitive integer types. I also note I didn't find any major flaw in code generation (I got what I expected for the innermost loops). Taken together, I understood I could write basic SIMD codes with some bit manipulation hacks almost in the same way as in C.
+
+Writing Arm AdvSIMD (NEON) codes was much harder. It still requires nightly channel, and large proportion of intrinsics are yet to be implemented. I found what I could do for now is writing SIMD codes in C and calling them via FFI, but it's not a good way anyway. The best way is to contribute to `core::arch::aarch64`, but I need learn much more to do this.
+
+I have some more things what I want to explore further about SIMD-intensive codes. The most important one is global dispatching. It's already easy to have multiple implementations, such as SSE4.2 and AVX2 variants, for a function using `#[cfg(target_feature)]`, but it's still unclear how to put a dispatcher at arbitrary point, or how compile the entire codebase into multiple different features and put global dispatcher at the entry point. I believe I can do this writing an appropriate macro (proc_macro?) or build.rs, but at this moment I can't imagine the detail how to implement it. Others include margined allocator (for eliminating need for special scalar implementation at the tail of arrays) and vectorized iterator (coupled with the margined allocator), but I found I need to learn concepts and existing convensions about unsafe things before trying implement them.
+
 ## Copyright and License
 
 Hajime Suzuki (2020), licensed under MIT.
+
