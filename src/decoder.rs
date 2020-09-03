@@ -158,7 +158,33 @@ impl<'a, 'b> Index<'a> {
 	}
 
 	#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-	unsafe fn decode_core_block(dst: &mut [u8], op: u32, ins: u64) -> (usize, u64) {
+	unsafe fn decode_core_block(dst: &mut [u8], op: u8, ins: u32) -> (usize, u32) {
+
+		/*
+		/* the following code correspond one-to-one to the x86_64 implementation above */
+
+		let del_mask      = vld1q_u8(Self::DEL_MASK.as_ref() as *const u8);
+		let is_del_thresh = vld1q_s8(Self::IS_DEL_THRESH.as_ref() as *const u8 as *const i8);
+
+		let xop = [op, op, op, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+		let xop = vld1q_s8(&xop as *const u8 as *const i8);
+		let is_del = vcgtq_s8(xop, is_del_thresh);			/* signed comparison */
+
+		let marker = if op_marker(op) == CompressMark::Ins as u32 { ins } else { op_marker(op) };
+		let mask = [marker as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+		let ins_mismatch_mask = vld1q_u8(&mask as *const u8);
+
+		let merged = vbslq_u8(is_del, del_mask, ins_mismatch_mask);
+		let zero = vld1q_u8(&[0; 16] as *const u8);
+		vst1q_u8(&mut dst[0 .. 16] as *mut u8, merged);
+		vst1q_u8(&mut dst[0 .. 16] as *mut u8, zero);
+
+		let next_ins     = if op_is_cont(op) { 0 } else { UdonOp::Ins as u32 };	/* next ins will be masked if 0x1f */
+		let adjusted_len = op_len(op);
+		(adjusted_len, next_ins)
+		*/
+
+		todo!();
 		(0, 0)
 	}
 
