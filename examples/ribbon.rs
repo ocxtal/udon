@@ -334,12 +334,12 @@ fn main() {
 		let window_range = window.clip(&range).unwrap();
 		if 3 * window_range.len() < window.len() { continue; }
 
-		let (window_range, offset_in_pixels) = window_range.scale(columns_per_pixel);
+		let (window_range, offset_in_pixel) = window_range.scale(columns_per_pixel);
 
 		/* slice ribbon scaled */
 		let mut ribbon = udon.decode_scaled(
 			&udon_range,
-			offset_in_pixels,
+			offset_in_pixel,
 			&scaler
 		).expect("Failed to decode udon ribbon. Would be a bug.");
 
@@ -348,7 +348,7 @@ fn main() {
 
 		/* then pileup; break when buffer is full */
 		pileup.push(&ribbon, window_range.start);
-		// println!("{:?}, {:?}, {}", udon_range, window_range, offset_in_pixels);
+		// println!("{:?}, {:?}, {}", udon_range, window_range, offset_in_pixel);
 	}
 
 	/* done!!! */
