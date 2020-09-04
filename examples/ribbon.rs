@@ -294,8 +294,8 @@ fn main() {
 
 
 	/* prepare ribbon scaler and color */
-	let pixels_per_column = window.len() as f64 / opt.width as f64;
-	let scaler = UdonScaler::new(&UdonPalette::default(), pixels_per_column);
+	let columns_per_pixel = window.len() as f64 / opt.width as f64;
+	let scaler = UdonScaler::new(&UdonPalette::default(), columns_per_pixel);
 	let base_color: [[u8; 4]; 2] = [[255, 191, 191, 0], [191, 191, 255, 0]];
 
 
@@ -334,7 +334,7 @@ fn main() {
 		let window_range = window.clip(&range).unwrap();
 		if 3 * window_range.len() < window.len() { continue; }
 
-		let (window_range, offset_in_pixels) = window_range.scale(pixels_per_column);
+		let (window_range, offset_in_pixels) = window_range.scale(columns_per_pixel);
 
 		/* slice ribbon scaled */
 		let mut ribbon = udon.decode_scaled(
