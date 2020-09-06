@@ -162,7 +162,7 @@ impl Pileup {
 		this
 	}
 
-	fn push(&mut self, ribbon: &[u32], horizontal_offset: usize) -> Option<()> {
+	fn push(&mut self, ribbon: &[[[u8; 4]; 2]], horizontal_offset: usize) -> Option<()> {
 
 		let background = self.params.background;
 		let border = self.params.border.color;
@@ -181,7 +181,7 @@ impl Pileup {
 
 			/* body */
 			for &x in &ribbon[.. ribbon_len] {
-				self.buf.write(&x.to_le_bytes()[.. 3]).ok()?;
+				self.buf.write(&x[0][.. 3]).ok()?;
 			}
 
 			/* right margin */
@@ -296,7 +296,10 @@ fn main() {
 	/* prepare ribbon scaler and color */
 	let columns_per_pixel = window.len() as f64 / opt.width as f64;
 	let scaler = UdonScaler::new(&UdonPalette::default(), columns_per_pixel);
-	let base_color: [[u8; 4]; 2] = [[255, 191, 191, 0], [191, 191, 255, 0]];
+	let base_color: [[[u8; 4]; 2]; 2] = [
+		[[255, 202, 191, 255], [255, 255, 255, 255]],
+		[[191, 228, 255, 255], [255, 255, 255, 255]]
+	];
 
 
 	/* everything successful; create PNG buffer */
@@ -344,7 +347,7 @@ fn main() {
 		).expect("Failed to decode udon ribbon. Would be a bug.");
 
 		/* put forward / reverse color then do gamma correction */
-		ribbon.append_on_basecolor(base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
+		ribbon.append_on_basecolor(&base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
 
 		/* then pileup; break when buffer is full */
 		pileup.push(&ribbon, window_range.start);

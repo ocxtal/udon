@@ -87,7 +87,7 @@ pub(super) trait Writer<T: Sized + Copy + Default> {
 	return object count that is actually used in the procedure.
 	*/
 	fn reserve_to<U, F>(&mut self, count: usize, func: F) -> Range<usize>
-		where U: Copy,
+		where U: Sized,
 		      F: FnOnce(&mut [U], &[T]) -> usize;
 }
 
@@ -97,11 +97,12 @@ impl<T: Sized + Copy + Default> Writer<T> for Vec<T> {
 	type T = u8;
 
 	fn reserve_to<U, F>(&mut self, count: usize, func: F) -> Range<usize>
-		where U: Copy,
+		where U: Sized,
 		      F: FnOnce(&mut [U], &[T]) -> usize
 	{
 		let base_offset = (self.len() + size_of::<U>() - 1) / size_of::<U>() * size_of::<U>();
 		let request_size = size_of::<U>() * count;
+		println!("base({:?}), request({:?})", base_offset, request_size);
 
 		/* extend array to hold requested count of U */
 		self.resize(base_offset + request_size, T::default());			/* can be mem::uninitialized() ? */

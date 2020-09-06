@@ -79,21 +79,21 @@ impl<'a, 'b> Index<'a> {
 		return Some(buf);
 	}
 
-	pub(super) fn decode_scaled_into(&self, dst: &mut Vec<u32>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &Scaler) -> Option<usize> {
+	pub(super) fn decode_scaled_into(&self, dst: &mut Vec<[[u8; 4]; 2]>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &Scaler) -> Option<usize> {
 		self.check_span(&ref_span)?;
 		self.decode_scaled_core(dst, &ref_span, offset_in_pixels, &scaler)
 	}
 
-	pub(super) fn decode_scaled(&self, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &Scaler) -> Option<Vec<u32>> {
+	pub(super) fn decode_scaled(&self, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &Scaler) -> Option<Vec<[[u8; 4]; 2]>> {
 		self.check_span(&ref_span)?;
 
 		let span = ref_span.end - ref_span.start;
 		let size = scaler.expected_size(span);
-		let mut buf = Vec::<u32>::with_capacity(size);
+		let mut buf = Vec::<[[u8; 4]; 2]>::with_capacity(size);
 		// debug!("ref_span({:?}), span({}), size({})", ref_span, span, size);
 
 		let used = self.decode_scaled_core(&mut buf, &ref_span, offset_in_pixels, &scaler)?;
-		buf.resize(used, 0);
+		buf.resize(used, [[0; 4]; 2]);
 		// debug!("used({})", used);
 
 		return Some(buf);
@@ -249,7 +249,7 @@ impl<'a, 'b> Index<'a> {
 		Some(len)
 	}
 
-	fn decode_scaled_core(&self, dst: &mut Vec<u32>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &Scaler) -> Option<usize> {
+	fn decode_scaled_core(&self, dst: &mut Vec<[[u8; 4]; 2]>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &Scaler) -> Option<usize> {
 
 		/* states (working variables) */
 		let (mut offset, margin) = scaler.init(offset_in_pixels);

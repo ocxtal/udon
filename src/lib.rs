@@ -51,7 +51,11 @@ pub enum UdonOp {
 }
 
 
-#[derive(Copy, Clone, Debug, Default)]
+/* aliasing type for convenience */
+pub type UdonColorPair = [[u8; 4]; 2];
+
+
+/* udon object */
 pub struct Udon<'o>(Index<'o>);
 
 
@@ -60,7 +64,11 @@ impl<'i, 'o> Udon<'o> {
 
 	/* builders */
 	pub fn build(cigar: &'i [u32], packed_query: &'i [u8], mdstr: &'i [u8]) -> Option<Box<Udon<'o>>> {
-		Index::build(cigar, packed_query, mdstr)
+		let index = Index::build(cigar, packed_query, mdstr)?;
+		let udon = unsafe {
+			Box::<Udon<'o>>::from_raw(Box::into_raw(index) as *mut Udon)
+		};
+		Some(udon)
 	}
 
 	/* UdonPrecursor is not exported for now.
@@ -85,11 +93,11 @@ impl<'i, 'o> Udon<'o> {
 		self.0.decode_raw(ref_span)
 	}
 
-	pub fn decode_scaled_into(&self, dst: &mut Vec<u32>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<usize> {
+	pub fn decode_scaled_into(&self, dst: &mut Vec<UdonColorPair>, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<usize> {
 		self.0.decode_scaled_into(dst, ref_span, offset_in_pixels, &scaler.0)
 	}
 
-	pub fn decode_scaled(&self, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<Vec<u32>> {
+	pub fn decode_scaled(&self, ref_span: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<Vec<UdonColorPair>> {
 		self.0.decode_scaled(ref_span, offset_in_pixels, &scaler.0)
 	}
 
@@ -108,28 +116,33 @@ impl<'i, 'o> Udon<'o> {
 /* UdonPalette
 
 Color table for scaled decoder. Required to build `UdonScaler`.
-See also `UdonScaler` and `Udon::decode_scaled` for the details.
+`UdonColorPair` is defined as a pair of RGBa8. In the default color scheme,
+the first channel is used for normal ribbon, and the second channel is for
+insertion markers. The two channels are treated without any difference,
+they can be used for arbitrary purposes.
+
+See also: `UdonColorPair`, `UdonScaler`, and `Udon::decode_scaled`.
 */
 #[derive(Copy, Clone, Debug)]
 pub struct UdonPalette {
-	/* all in (r, g, b, unused) form */
-	background:  [u8; 4],
-	del: [u8; 4],
-	ins: [u8; 4],
-	mismatch: [[u8; 4]; 4]
+	/* all in [(r, g, b, alpha); 2] form */
+	background:  UdonColorPair,
+	del: UdonColorPair,
+	ins: UdonColorPair,
+	mismatch: [UdonColorPair; 4]
 }
 
 impl Default for UdonPalette {
 	fn default() -> UdonPalette {
 		UdonPalette {
-			background: [0xff, 0xff, 0xff, 0xff],
-			del: [0x00, 0x00, 0xdd, 0xf0],
-			ins: [0xdd, 0x00, 0xdd, 0xf0],
+			background: [[255, 255, 255, 255], [255, 255, 255, 255]],
+			del: [[255, 255, 255,   0], [255, 255, 255, 255]],		/* white (transparent) */
+			ins: [[255, 255, 255, 255], [153,   0, 153,   0]],		/* black (transparent) */
 			mismatch: [
-				[0x33, 0x33, 0x00, 0xf0],
-				[0x00, 0x00, 0xff, 0xf0],
-				[0x00, 0xcc, 0x66, 0xf0],
-				[0xff, 0x00, 0x66, 0xf0]
+				[[  3, 175,  64, 0], [255, 255, 255, 255]],		/* green */
+				[[  0,  90, 255, 0], [255, 255, 255, 255]],		/* blue */
+				[[ 80,  32,  64, 0], [255, 255, 255, 255]],		/* dark brown */
+				[[255,   0,   0, 0], [255, 255, 255, 255]]		/* yellow */
 			]
 		}
 	}
@@ -154,19 +167,29 @@ impl UdonScaler {
 Provides utilities on ribbon (&mut [u32]): blending and gamma correction
 */
 pub trait UdonUtils {
-	fn append_on_basecolor(&mut self, basecolor: [u8; 4]) -> &mut Self;
+	fn append_on_basecolor(&mut self, basecolor: &UdonColorPair) -> &mut Self;
 	fn correct_gamma(&mut self) -> &mut Self;
 }
 
-impl UdonUtils for [u32] {
+impl UdonUtils for [UdonColorPair] {
 
-	fn append_on_basecolor(&mut self, basecolor: [u8; 4]) -> &mut Self {
+	fn append_on_basecolor(&mut self, basecolor: &UdonColorPair) -> &mut Self {
 		for x in self.iter_mut() {
-			let mut v = x.to_le_bytes();
+			let alpha0 = x[0][3] as u16;
+			let alpha1 = x[1][3] as u16;
+
 			for i in 0 .. 4 {
-				v[i] = basecolor[i] - v[i].min(basecolor[i]);
+				let base0 = basecolor[0][i] as u16;
+				let base1 = basecolor[1][i] as u16;
+				let color0 = (255 - x[0][i]) as u16;
+				let color1 = (255 - x[1][i]) as u16;
+
+				let color0 = base0 * (256 - alpha0) + color0 * alpha0;
+				let color1 = base1 * (256 - alpha1) + color1 * alpha1;
+
+				x[0][i] = (color0>>8) as u8;
+				x[1][i] = (color1>>8) as u8;
 			}
-			*x = u32::from_le_bytes(v);
 		}
 		self
 	}
@@ -192,11 +215,10 @@ impl UdonUtils for [u32] {
 		];
 
 		for x in self.iter_mut() {
-			let mut v = x.to_le_bytes();
 			for i in 0 .. 4 {
-				v[i] = GAMMA[v[i] as usize];
+				x[0][i] = GAMMA[x[0][i] as usize];
+				x[1][i] = GAMMA[x[1][i] as usize];
 			}
-			*x = u32::from_le_bytes(v);
 		}
 		self
 	}
@@ -209,7 +231,7 @@ mod test {
 	use std::str::from_utf8;
 
 	#[allow(unused_imports)]
-	use super::{ Udon, UdonPalette, UdonScaler };
+	use super::{ Udon, UdonColorPair, UdonPalette, UdonScaler };
 	use super::utils::{ encode_base_unchecked, decode_base_unchecked };
 	use super::op::CigarOp;
 	use super::index::BLOCK_PITCH;
@@ -332,13 +354,13 @@ mod test {
 		});
 	}
 
-	const BG: [u8; 4]   = [0xff, 0xff, 0xff, 0xff];
-	const DEL: [u8; 4]  = [0x00, 0x00, 0xff, 0x00];
-	const INS: [u8; 4]  = [0xff, 0x00, 0xff, 0x00];
-	const MISA: [u8; 4] = [0x7f, 0x1f, 0x1f, 0x00];
-	const MISC: [u8; 4] = [0x00, 0x00, 0xff, 0x00];
-	const MISG: [u8; 4] = [0x00, 0xff, 0x00, 0x00];
-	const MIST: [u8; 4] = [0xff, 0x00, 0x00, 0x00];
+	const BG: [[u8; 4]; 2]   = [[0xff, 0xff, 0xff, 0xff], [0xff, 0xff, 0xff, 0xff]];
+	const DEL: [[u8; 4]; 2]  = [[0x00, 0x00, 0xff, 0x00], [0x00, 0x00, 0xff, 0x00]];
+	const INS: [[u8; 4]; 2]  = [[0xff, 0x00, 0xff, 0x00], [0xff, 0x00, 0xff, 0x00]];
+	const MISA: [[u8; 4]; 2] = [[0x7f, 0x1f, 0x1f, 0x00], [0x7f, 0x1f, 0x1f, 0x00]];
+	const MISC: [[u8; 4]; 2] = [[0x00, 0x00, 0xff, 0x00], [0x00, 0x00, 0xff, 0x00]];
+	const MISG: [[u8; 4]; 2] = [[0x00, 0xff, 0x00, 0x00], [0x00, 0xff, 0x00, 0x00]];
+	const MIST: [[u8; 4]; 2] = [[0xff, 0x00, 0x00, 0x00], [0xff, 0x00, 0x00, 0x00]];
 
 	macro_rules! compare_color {
 		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr, $factor: expr ) => ({
@@ -367,13 +389,17 @@ mod test {
 				$scale
 			);
 			let b = match u.decode_scaled(&r, $offset, &s) {
-				None    => Vec::<u32>::new(),
+				None    => Vec::<UdonColorPair>::new(),
 				Some(v) => v
 			};
-			let n: Vec::<u32> = $ribbon.iter().map(|x| {
+			let n: Vec::<UdonColorPair> = $ribbon.iter().map(|x| {
 				let mut x = *x;
-				for i in 0 .. 4 { x[i] = ((0xff - x[i]) as f64 * $factor) as u8; }
-				u32::from_le_bytes(x)
+				for i in 0 .. 4 {
+					x[0][i] = ((0xff - x[0][i]) as f64 * $factor) as u8;
+					x[1][i] = ((0xff - x[1][i]) as f64 * $factor) as u8;
+				}
+				// u32::from_le_bytes(x)
+				x
 			}).collect();
 			// println!("{:?}, {:?}", b, n);
 			assert!(b == n, "{:?}, {:?}", b, n);

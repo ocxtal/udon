@@ -1,12 +1,11 @@
 
 
-use super::Udon;
 use super::utils::{ SlicePrecursor, Writer, atoi_unchecked, transcode_base_unchecked };
 use super::op::{ CigarOp, Cigar, CompressMark, IntoOpsIterator, op_len };
 use super::index::{ Index, Block, BLOCK_PITCH };
 use super::insbin::InsTracker;
 use std::io::Write;
-use std::mem::{ size_of, transmute, forget };
+use std::mem::{ align_of, size_of, transmute, forget };
 use std::ops::Range;
 use std::ptr::copy_nonoverlapping;
 use std::slice::{ Iter, IterMut };
@@ -15,7 +14,7 @@ use std::slice::{ Iter, IterMut };
 /* builder APIs */
 impl<'a, 'b> Index<'a> {
 
-	pub(super) fn build(cigar: &'b [u32], packed_query: &'b [u8], mdstr: &'b [u8]) -> Option<Box<Udon<'a>>> {
+	pub(super) fn build(cigar: &'b [u32], packed_query: &'b [u8], mdstr: &'b [u8]) -> Option<Box<Index<'a>>> {
 		/*
 		Note:
 		This function creates box for `Udon` but it has a flaw that the created box has
@@ -34,16 +33,16 @@ impl<'a, 'b> Index<'a> {
 		Self::build_core(cigar, packed_query, mdstr)
 	}
 
-	fn build_core(cigar: &'b [Cigar], packed_query: &'b [u8], mdstr: &'b [u8]) -> Option<Box<Udon<'a>>> {
+	fn build_core(cigar: &'b [Cigar], packed_query: &'b [u8], mdstr: &'b [u8]) -> Option<Box<Index<'a>>> {
 		let mut buf = Vec::<u8>::new();
 
 		/* header always at the head */
-		let range = buf.reserve_to(1, |header: &mut [Udon], _: &[u8]| {
+		let range = buf.reserve_to(1, |header: &mut [Index], _: &[u8]| {
 			header[0] = Default::default();
 			1
 		});
 		assert!(range.start == 0);
-		assert!(range.end == size_of::<Udon>());
+		assert!(range.end == size_of::<Index>());
 
 		return match Precursor::build_core(buf, cigar, packed_query, mdstr) {
 			(_, None) => None,
@@ -51,27 +50,37 @@ impl<'a, 'b> Index<'a> {
 		}
 	}
 
-	fn compose_box(buf: Vec<u8>, precursor: Precursor) -> Box<Udon<'a>> {
+	fn make_arena_aligned(buf: &mut Vec<u8>, align: usize) -> usize {
+		let size = ((buf.len() + align - 1) / align) * align;
+		buf.resize(size, 0);
+		size
+	}
+
+	fn compose_box(buf: Vec<u8>, precursor: Precursor) -> Box<Index<'a>> {
 		let mut buf = buf;
+		let size = Self::make_arena_aligned(&mut buf, align_of::<Index>());
 
 		/* compose pointer-adjusted header on stack */
 		let base: *mut u8 = buf.as_mut_ptr();
 		let header = unsafe { Self::from_precursor_raw(base as *const u8, &precursor) };
 
 		/* compose box and copy header into it */
-		let udon = unsafe {
+		let mut udon = unsafe {
 			/* convert buffer (on heap) to box */
-			let mut udon = Box::<Udon<'a>>::from_raw(
-				transmute::<*mut u8, *mut Udon<'a>>(base)
+			let mut udon = Box::<Index<'a>>::from_raw(
+				transmute::<*mut u8, *mut Index<'a>>(base)
 			);
 
 			/* copy header from stack to heap (box) */
-			let src = &header as *const Index<'a> as *const Udon<'a>;
-			let dst = &mut udon as &mut Udon<'a> as *mut Udon<'a>;
+			let src = &header as *const Index<'a>;
+			let dst = &mut udon as &mut Index<'a> as *mut Index<'a>;
 			copy_nonoverlapping(src, dst, 1);
 
 			udon
 		};
+
+		/* save size for proper memory handling */
+		udon.size = size;
 
 		/* heap block inside buf was moved to udon so we have to release buf */
 		forget(buf);		/* note: this allowed outside unsafe */
@@ -80,10 +89,10 @@ impl<'a, 'b> Index<'a> {
 	}
 
 	#[allow(dead_code)]
-	pub(super) unsafe fn from_precursor(buf: &Vec<u8>, precursor: Precursor) -> Udon<'a> {
+	pub(super) unsafe fn from_precursor(buf: &Vec<u8>, precursor: Precursor) -> Index<'a> {
 		let base: *const u8 = buf.as_ptr();
 
-		Udon(Self::from_precursor_raw(base, &precursor))
+		Self::from_precursor_raw(base, &precursor)
 	}
 
 	unsafe fn from_precursor_raw(base: *const u8, precursor: &Precursor) -> Index<'a> {

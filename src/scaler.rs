@@ -2,7 +2,7 @@
 
 use super::{ UdonOp, UdonPalette };
 use std::f64::consts::PI;
-use std::ops::{ Range, Add, Sub, Mul, AddAssign };
+use std::ops::{ Range, Add, Sub, Mul, AddAssign, MulAssign };
 
 
 /* Scaler
@@ -21,42 +21,46 @@ scaling factor and drawing offset.
 */
 #[derive(Copy, Clone, Debug, Default)]
 struct Color {
-	v: [i32; 4]
+	v: [i32; 8]
 }
 
-impl From<&[u8; 4]> for Color {
-	fn from(val: &[u8; 4]) -> Color {
+impl From<&[[u8; 4]; 2]> for Color {
+	fn from(val: &[[u8; 4]; 2]) -> Color {
 		let mut x = Color::default();
-		for i in 0 .. 4 { x.v[i] = val[i] as i32; }
+		for i in 0 .. 4 { x.v[i    ] = val[0][i] as i32; }
+		for i in 0 .. 4 { x.v[i + 4] = val[1][i] as i32; }
 		x
 	}
 }
 
-impl From<&Color> for [u8; 4] {
-	fn from(val: &Color) -> [u8; 4] {
-		let mut x: [u8; 4] = Default::default();
+impl From<&Color> for [[u8; 4]; 2] {
+	fn from(val: &Color) -> [[u8; 4]; 2] {
+		let mut x: [[u8; 4]; 2] = Default::default();
 		for i in 0 .. 4 {
-			x[i] = val.v[i].min(255).max(0) as u8;
+			x[0][i] = val.v[i    ].min(255).max(0) as u8;
+			x[1][i] = val.v[i + 4].min(255).max(0) as u8;
 		}
 		x
 	}
 }
-
-impl From<&Color> for u32 {
-	fn from(val: &Color) -> u32 {
-		let mut x: [u8; 4] = Default::default();
+/*
+impl From<&Color> for (u32, u32) {
+	fn from(val: &Color) -> (u32, u32) {
+		let mut x: [[u8; 4]; 2] = Default::default();
 		for i in 0 .. 4 {
-			x[i] = val.v[i].min(255).max(0) as u8;
+			x[0][i] = val.v[i    ].min(255).max(0) as u8;
+			x[1][i] = val.v[i + 4].min(255).max(0) as u8;
 		}
-		u32::from_le_bytes(x)
+		(u32::from_le_bytes(x[0]), u32::from_le_bytes(x[1]))
 	}
 }
+*/
 
 impl Add<Color> for Color {
 	type Output = Color;
 	fn add(self, other: Color) -> Color {
 		let mut x = self;
-		for i in 0 .. 4 { x.v[i] += other.v[i]; }
+		for i in 0 .. 8 { x.v[i] += other.v[i]; }
 		x
 	}
 }
@@ -64,7 +68,7 @@ impl Sub<Color> for Color {
 	type Output = Color;
 	fn sub(self, other: Color) -> Color {
 		let mut x = self;
-		for i in 0 .. 4 { x.v[i] -= other.v[i]; }
+		for i in 0 .. 8 { x.v[i] -= other.v[i]; }
 		x
 	}
 }
@@ -72,7 +76,7 @@ impl Mul<Color> for Color {
 	type Output = Color;
 	fn mul(self, other: Color) -> Color {
 		let mut x = self;
-		for i in 0 .. 4 {
+		for i in 0 .. 8 {
 			/* upcast, multiply, then downcast. (expect pmuludq) */
 			let n = x.v[i] as i64 * other.v[i] as i64;
 			x.v[i] = (n>>24) as i32;		/* I expect this won't overflow but no guarantee */
@@ -85,7 +89,7 @@ impl Add<i32> for Color {
 	type Output = Color;
 	fn add(self, other: i32) -> Color {
 		let mut x = self;
-		for i in 0 .. 4 { x.v[i] += other; }
+		for i in 0 .. 8 { x.v[i] += other; }
 		x
 	}
 }
@@ -93,7 +97,7 @@ impl Mul<i32> for Color {
 	type Output = Color;
 	fn mul(self, other: i32) -> Color {
 		let mut x = self;
-		for i in 0 .. 4 {
+		for i in 0 .. 8 {
 			let n = x.v[i] as i64 * other as i64;
 			x.v[i] = (n>>24) as i32;
 		}
@@ -105,8 +109,8 @@ impl Mul<i32> for Color {
 impl AddAssign<Color> for Color {
 	fn add_assign(&mut self, other: Color) { *self = self.add(other); }
 }
-impl AddAssign<i32> for Color {
-	fn add_assign(&mut self, other: i32) { *self = self.add(other); }
+impl MulAssign<Color> for Color {
+	fn mul_assign(&mut self, other: Color) { *self = self.mul(other); }
 }
 
 
@@ -116,7 +120,7 @@ pub(super) struct Scaler {
 	columns_per_pixel: f64,
 	window: f64,
 	offset: f64,
-	normalizer: i32,
+	normalizer: Color,
 	color: [Color; 12],
 	table: [Vec<i32>; 17]
 }
@@ -169,7 +173,7 @@ impl Scaler {
 
 	fn build_color_table(color: &UdonPalette) -> [Color; 12] {
 
-		let ff = Color::from(&[0xff, 0xff, 0xff, 0xff]);
+		let ff = Color::from(&[[0xff, 0xff, 0xff, 0xff], [0xff, 0xff, 0xff, 0xff]]);
 		let mismatch: [Color; 4] = [
 			ff - Color::from(&color.mismatch[0]),
 			ff - Color::from(&color.mismatch[1]),
@@ -218,13 +222,24 @@ impl Scaler {
 		let scale = columns_per_pixel.max(1.0);
 		let pitch = columns_per_pixel / scale;
 		let width = 0.5 * (scale - 1.0);
-		let normalizer = 1.0 / (columns_per_pixel.log(4.0 / 3.0).max(1.0) + columns_per_pixel / 10.0);
+		let normalizer = 1.0 / (columns_per_pixel.log(1.4).max(1.0) + columns_per_pixel / 1000.0);
 
 		let mut x = Scaler {
 			columns_per_pixel: columns_per_pixel,
 			window: scale.ceil() + 1.0,
 			offset: (scale.ceil() + 1.0) / 2.0,
-			normalizer: (0x01000000 as f64 * normalizer) as i32,
+			normalizer: Color {
+				v: [
+					0x01000000,
+					0x01000000,
+					0x01000000,
+					(0x01000000 as f64 * normalizer) as i32,
+					0x01000000,
+					0x01000000,
+					0x01000000,
+					(0x01000000 as f64 * normalizer) as i32
+				]
+			},
 			color: Self::build_color_table(&color),
 			table: Default::default()
 		};
@@ -301,7 +316,7 @@ impl Scaler {
 		(offset, margin)
 	}
 
-	pub(super) fn scale(&self, dst: &mut Vec<u32>, src: &[u8], offset: f64) -> Option<(f64, usize)> {
+	pub(super) fn scale(&self, dst: &mut Vec<[[u8; 4]; 2]>, src: &[u8], offset: f64) -> Option<(f64, usize)> {
 
 		// println!("scale, offset({})", offset);
 		for i in 0 .. {
@@ -327,9 +342,10 @@ impl Scaler {
 				// println!("col({}), color({:?}), coef({})", column, self.pick_color(column), coef);
 				a += self.pick_color(column) * coef;
 			}
-			// println!("acc({:?})", a);
-			a = a * self.normalizer;
-			dst.push(u32::from(&a));
+
+			a *= self.normalizer;
+			// println!("acc({:?})", <[[u8; 4]; 2]>::from(&a));
+			dst.push(<[[u8; 4]; 2]>::from(&a));
 		}
 
 		return None;

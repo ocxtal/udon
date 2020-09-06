@@ -2,6 +2,8 @@
 
 use super::utils::PeekFold;
 use super::op::op_len;
+// use std::alloc::{ Layout, dealloc };
+// use std::mem::align_of;
 use std::ops::Range;
 
 
@@ -25,9 +27,9 @@ bitfield!{
 	pub op_skip,    set_op_skip:    63, 59;
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Default)]
 pub(super) struct Index<'a> {
-	pub(super) size: usize,				/* object size for copying; for Clone */
+	pub(super) size: usize,				/* object size for copying */
 	pub(super) ref_span: usize,			/* reference side span */
 	pub(super) op: &'a [u8],
 	pub(super) block: &'a [Block],
