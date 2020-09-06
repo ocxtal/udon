@@ -125,7 +125,7 @@ See also: `UdonColorPair`, `UdonScaler`, and `Udon::decode_scaled`.
 */
 #[derive(Copy, Clone, Debug)]
 pub struct UdonPalette {
-	/* all in [(r, g, b, alpha); 2] form */
+	/* all in [(r, g, b, alpha); 2] form; the larger alpha value, the more transparent */
 	background:  UdonColorPair,
 	del: UdonColorPair,
 	ins: UdonColorPair,

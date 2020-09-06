@@ -102,7 +102,7 @@ impl<T: Sized + Copy + Default> Writer<T> for Vec<T> {
 	{
 		let base_offset = (self.len() + size_of::<U>() - 1) / size_of::<U>() * size_of::<U>();
 		let request_size = size_of::<U>() * count;
-		println!("base({:?}), request({:?})", base_offset, request_size);
+		// println!("base({:?}), request({:?})", base_offset, request_size);
 
 		/* extend array to hold requested count of U */
 		self.resize(base_offset + request_size, T::default());			/* can be mem::uninitialized() ? */
