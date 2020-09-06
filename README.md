@@ -7,7 +7,10 @@
 ```Rust
 /* prepare scaler and color palette (10 columns (bases) per pixel) */
 let scaler = UdonScaler::new(&UdonPalette::default(), 10.0);
-let base_color: [[u8; 4]; 2] = [[255, 191, 191, 0], [191, 191, 255, 0]];
+let base_color: [[[u8; 4]; 2]; 2] = [
+	[[255, 202, 191, 255], [255, 255, 255, 255]],
+	[[191, 228, 255, 255], [255, 255, 255, 255]]
+];
 
 /* for each alignment... */
 let mut record = Record::new();
@@ -27,7 +30,7 @@ while let Ok(true) = reader.read_into(&mut record) {
 	/* put forward / reverse color then apply gamma correction */
 	ribbon.append_on_basecolor(base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
 
-	/* here we obtained alignment ribbon in RGBa8 format */
+	/* here we obtained alignment ribbon in [RGBa8; 2] (= [[u8; 4]; 2]) array */
 	do_something_with(ribbon);
 }
 ```
@@ -40,7 +43,7 @@ Pileups with different scales, drawn by [ribbon.rs](https://github.com/ocxtal/ud
 
 ![15.625 columns / pixel](./fig/example.10000.png)
 
-*Figure1: 100 (top), 1000 (middle), 10000 (bottom) columns per 640 pixels.*
+*Figure1: 100 (top), 1000 (middle), and 10000 (bottom) columns per 640 pixels.*
 
 ## Requirements
 
@@ -74,9 +77,11 @@ Returns reference side span, excluding soft- and hard-clips at the both ends.
 ### Decode
 
 ```rust
+pub type UdonColorPair = [[u8; 4]; 2];	/* [(r, g, b, alpha); 2] */
+
 impl<'o> Udon<'o> {
 	pub fn decode_raw(&self, ref_range: &Range<usize>) -> Option<Vec<u8>>;
-	pub fn decode_scaled(&self, ref_range: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<Vec<u32>>;
+	pub fn decode_scaled(&self, ref_range: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<Vec<UdonColorPair>>;
 }
 ```
 
@@ -87,20 +92,22 @@ Decode udon into an array of columns or an alignment ribbon. `decode_raw` does t
 #### Color handling in scaled decoder
 
 ```rust
+pub type UdonColorPair = [[u8; 4]; 2];	/* [(r, g, b, alpha); 2] */
+
 pub struct UdonPalette {
-	/* all in (r, g, b, unused) form */
-	background:  [u8; 4],
-	del: [u8; 4],
-	ins: [u8; 4],
-	mismatch: [[u8; 4]; 4]
+	/* all in [(r, g, b, alpha); 2] form; the larger alpha value, the more transparent */
+	background:  UdonColorPair,
+	del: UdonColorPair,
+	ins: UdonColorPair,
+	mismatch: [UdonColorPair; 4]
 }
 
 impl UdonScaler {
 	pub fn new(color: &UdonPalette, columns_per_pixel: f64) -> UdonScaler;
 }
 
-impl UdonUtils for [u32] {
-	fn append_on_basecolor(&mut self, basecolor: [u8; 4]) -> &mut Self;
+impl UdonUtils for [UdonColorPair] {
+	fn append_on_basecolor(&mut self, basecolor: UdonColorPair) -> &mut Self;
 	fn correct_gamma(&mut self) -> &mut Self;
 }
 ```
@@ -151,6 +158,20 @@ Since the two procedures are independent, they are executed without waiting for 
 ### Scaled decompression
 
 Scaling of alignment ribbon is essential for visualization. Udon provides unified decomression-and-scaling API that require no external intermediate buffer. The implementation is quite straightforward; it divides the queried range into multiple constant-length subranges (16 KB by default), and apply decompression and scaling procedures one by one using a single intermediate buffer. The default subrange length was determined so that the buffer won't spill out of the last-level (L3) data cache. Everything done on L3 cache, the conversion throughput won't be impaired.
+
+## Benchmark
+
+`todo!();`
+
+## FAQ
+
+### Can Udon change color for a particular motif?
+
+Currently No. One reason is that Udon itself omits information of reference-side bases, though it's stored in the MD string. If a motif can be detected only from mismatched bases, it's possible on decoding. However, such functionality is not implemented yet.
+
+It might be possible to implement an auxilialy data structure, motif array, for conditional colorization. It should be an array of the reference-side sequence, where motif sequence is stored as is and the others are cleared. The motif array is compared to the decoded udon stream, and "modification" flag is set for a series of columns that have a specific match-mismatch pattern. The detected motif region can be colored differently, by extending the `UdonPalette` and `UdonScaler` to treat the modification flag properly.
+
+*(I would appreciate if anyone implement this feature.)*
 
 ## First impression on writing SIMD codes in Rust (2020/9)
 
