@@ -107,7 +107,7 @@ impl UdonScaler {
 }
 
 impl UdonUtils for [UdonColorPair] {
-	fn append_on_basecolor(&mut self, basecolor: UdonColorPair) -> &mut Self;
+	fn append_on_basecolor(&mut self, basecolor: &UdonColorPair) -> &mut Self;
 	fn correct_gamma(&mut self) -> &mut Self;
 }
 ```
