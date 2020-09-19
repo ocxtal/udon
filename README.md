@@ -28,7 +28,7 @@ while let Ok(true) = reader.read_into(&mut record) {
 	let mut ribbon = udon.decode_scaled(&decode_range, 0.0, &scaler).unwrap();
 
 	/* put forward / reverse color then apply gamma correction */
-	ribbon.append_on_basecolor(base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
+	ribbon.append_on_basecolor(&base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
 
 	/* here we obtained alignment ribbon in [RGBa8; 2] (= [[u8; 4]; 2]) array */
 	do_something_with(ribbon);
