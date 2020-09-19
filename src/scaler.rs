@@ -222,7 +222,8 @@ impl Scaler {
 		let scale = columns_per_pixel.max(1.0);
 		let pitch = columns_per_pixel / scale;
 		let width = 0.5 * (scale - 1.0);
-		let normalizer = 1.0 / (columns_per_pixel.log(1.4).max(1.0) + columns_per_pixel / 1000.0);
+		let color_coef = 1.0 / (columns_per_pixel.log(3.5).max(1.0) + columns_per_pixel / 10.0);
+		let alpha_coef = 1.0 / (columns_per_pixel.log(2.5).max(1.0) + columns_per_pixel / 5.0);
 
 		let mut x = Scaler {
 			columns_per_pixel: columns_per_pixel,
@@ -230,14 +231,14 @@ impl Scaler {
 			offset: (scale.ceil() + 1.0) / 2.0,
 			normalizer: Color {
 				v: [
-					0x01000000,
-					0x01000000,
-					0x01000000,
-					(0x01000000 as f64 * normalizer) as i32,
-					0x01000000,
-					0x01000000,
-					0x01000000,
-					(0x01000000 as f64 * normalizer) as i32
+					(0x01000000 as f64 * color_coef) as i32,
+					(0x01000000 as f64 * color_coef) as i32,
+					(0x01000000 as f64 * color_coef) as i32,
+					(0x01000000 as f64 * alpha_coef) as i32,
+					(0x01000000 as f64 * color_coef) as i32,
+					(0x01000000 as f64 * color_coef) as i32,
+					(0x01000000 as f64 * color_coef) as i32,
+					(0x01000000 as f64 * alpha_coef) as i32
 				]
 			},
 			color: Self::build_color_table(&color),
