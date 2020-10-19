@@ -363,7 +363,7 @@ mod test {
 	const MIST: [[u8; 4]; 2] = [[0xff, 0x00, 0x00, 0x00], [0xff, 0x00, 0x00, 0x00]];
 
 	macro_rules! compare_color {
-		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr, $factor: expr ) => ({
+		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr, $color_factor: expr, $alpha_factor: expr ) => ({
 			let c = $cigar;
 			let n = $nucl;
 			let m = $mdstr;
@@ -394,10 +394,15 @@ mod test {
 			};
 			let n: Vec::<UdonColorPair> = $ribbon.iter().map(|x| {
 				let mut x = *x;
-				for i in 0 .. 4 {
-					x[0][i] = ((0xff - x[0][i]) as f64 * $factor) as u8;
-					x[1][i] = ((0xff - x[1][i]) as f64 * $factor) as u8;
+				for i in 0 .. 3 {
+					x[0][i] = ((0xff - x[0][i]) as f64 * $color_factor) as u8;
+					x[1][i] = ((0xff - x[1][i]) as f64 * $color_factor) as u8;
 				}
+				for i in 3 .. 4 {
+					x[0][i] = ((0xff - x[0][i]) as f64 * $alpha_factor) as u8;
+					x[1][i] = ((0xff - x[1][i]) as f64 * $alpha_factor) as u8;
+				}
+
 				// u32::from_le_bytes(x)
 				x
 			}).collect();
@@ -1362,7 +1367,8 @@ mod test {
 			Range { start: 0, end: 0 },
 			0.0, 1.0,
 			vec![BG, BG, BG, BG, DEL, BG, BG, BG, BG],
-			1.0 / 1.1
+			1.0 / (1.0f64.log(3.5).max(1.0) + 1.0f64 / 10.0),
+			1.0 / (1.0f64.log(2.5).max(1.0) + 1.0f64 / 5.0)
 		);
 
 		compare_color!(
@@ -1372,7 +1378,8 @@ mod test {
 			Range { start: 0, end: 0 },
 			0.0, 3.0,
 			vec![BG, DEL, BG],
-			1.0 / (3.0f64.log(4.0 / 3.0) + 1.0 / 3.0)
+			1.0 / (3.0f64.log(3.5).max(1.0) + 3.0f64 / 10.0),
+			1.0 / (3.0f64.log(2.5).max(1.0) + 3.0f64 / 5.0)
 		);
 
 		/* we need more tests but how to do */
