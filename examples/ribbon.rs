@@ -131,7 +131,7 @@ impl Default for PileupParams {
 			background: [255, 255, 255, 0],
 			fontsize: 9.0,
 			ribbon: RibbonAttributes {
-				height: 6,
+				height: 5,
 				border: Border {
 					thickness: 1,
 					color: [32, 32, 32, 0]
@@ -173,7 +173,9 @@ impl Pileup {
 
 		// println!("{:?}, {:?}, {:?}", left_blank, right_blank, ribbon_len);
 
-		for _ in 0 .. self.params.ribbon.height {
+		for i in 0 .. self.params.ribbon.height {
+			let idx = if i == self.params.ribbon.height / 2 { 1 } else { 0 };
+
 			/* left margin */
 			self.fill(&background, self.params.margin.x);
 			self.fill(&border, self.params.border.thickness);
@@ -181,7 +183,7 @@ impl Pileup {
 
 			/* body */
 			for &x in &ribbon[.. ribbon_len] {
-				self.buf.write(&x[0][.. 3]).ok()?;
+				self.buf.write(&x[idx][.. 3]).ok()?;
 			}
 
 			/* right margin */
@@ -297,8 +299,8 @@ fn main() {
 	let columns_per_pixel = window.len() as f64 / opt.width as f64;
 	let scaler = UdonScaler::new(&UdonPalette::default(), columns_per_pixel);
 	let base_color: [[[u8; 4]; 2]; 2] = [
-		[[255, 202, 191, 255], [255, 255, 255, 255]],
-		[[191, 228, 255, 255], [255, 255, 255, 255]]
+		[[255, 202, 191, 255], [255, 202, 191, 255]],
+		[[191, 228, 255, 255], [191, 228, 255, 255]]
 	];
 
 
