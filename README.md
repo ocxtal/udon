@@ -35,7 +35,7 @@ while let Ok(true) = reader.read_into(&mut record) {
 }
 ```
 
-Pileups with different scales, drawn by [ribbon.rs](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs):
+Pileups at different scales, drawn by [ribbon.rs](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs):
 
 ![0.15625 columns / pixel](./fig/example.100.png)
 
