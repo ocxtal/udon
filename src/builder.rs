@@ -383,16 +383,44 @@ impl<'a, 'b> Builder<'a> {
 		return transcode_base_unchecked(c>>4);
 	}
 
+	fn cigar_rem(&self) -> usize {
+		self.cigar.as_slice().len()
+	}
+
 	/*
 	We need cigar iterator peekable, but Iter::Peekable implementation is redundant
 	for slice::Iter. What we really need is peeking the head by .as_slice()[0].
 	*/
-	fn peek_cigar(&self) -> Option<Cigar> {
-		if self.cigar.as_slice().len() == 0 {
+	fn peek_cigar_op(&self) -> Option<u32> {
+		if self.cigar_rem() == 0 {
 			return None;
 		}
 
-		return Some(self.cigar.as_slice()[0]);
+		return Some(self.cigar.as_slice()[0].op());
+	}
+
+	fn canonize_op(op: u32) -> u32 {
+		if op >= CigarOp::Eq as u32 {
+			return CigarOp::Match as u32;
+		}
+		return op;
+	}
+
+	fn eat_cigar(&mut self) -> Option<(u32, usize)> {
+		let c = self.cigar.next()?;
+
+		let op = Self::canonize_op(c.op() as u32);
+		let mut len = c.len() as usize;
+
+		while self.cigar_rem() > 0 {
+			let next_op = Self::canonize_op(self.peek_cigar_op()?);
+			if next_op != op { break; }
+
+			let c = self.cigar.next()?;
+			len += c.len() as usize;
+		}
+
+		return Some((op, len));
 	}
 
 	/* MD string handling: forward pointer along with atoi */
@@ -440,10 +468,9 @@ impl<'a, 'b> Builder<'a> {
 
 	/* forward both cigar and md strings */
 	fn eat_del(&mut self) -> Option<u32> {
-		let c = self.cigar.next()?;
-		assert!(c.op() == CigarOp::Del as u32);
+		let (op, len) = self.eat_cigar()?;
+		assert!(op == CigarOp::Del as u32);
 
-		let len = c.len() as usize;
 		self.mdstr.nth(len - 1)?;		/* error if starved */
 		self.mdstr.next();				/* not regarded as error for the last element */
 
@@ -462,30 +489,31 @@ impl<'a, 'b> Builder<'a> {
 	fn eat_ins(&mut self, xrem: usize) -> Option<usize> {
 		assert!(self.qofs <= std::i32::MAX as usize);
 
-		let c = self.cigar.next()?;
-		assert!(c.op() == CigarOp::Ins as u32);
+		let (op, len) = self.eat_cigar()?;
+		assert!(op == CigarOp::Ins as u32);
 
 		/* forward query offset */
 		let ofs = self.qofs;
-		let len = c.len() as usize;
 		self.qofs += len;
 		// debug!("eat_ins, xrem({}), len({}), qofs({})", xrem, len, self.qofs);
 
 		self.save_ins(ofs, len);		/* use offset before forwarding */
 		return Some(xrem);				/* there might be remainder */
 	}
+
+	/* forward match; eating both cigar and md strings */
 	fn eat_match(&mut self, xrem: usize, last_op: u32) -> Option<usize> {
 
 		/* consumes only when the op is match. works as an escape route for del after ins or ins after del */
-		let c = self.peek_cigar()?;
-		let is_valid = c.op() == CigarOp::Match as u32;
-		if is_valid { self.cigar.next()?; }
+		let op = Self::canonize_op(self.peek_cigar_op()?);
+		let is_valid = op == CigarOp::Match as u32;
+		// if is_valid { self.cigar.next()?; }
 
 		/* forward qofs before adjusting xrem with the previous op */
 		self.qofs += xrem;
 
 		/* adjust crem and xrem; last_op == 0 for ins, > 0 for del */
-		let mut crem = if is_valid { c.len() as usize } else { 0 } + last_op as usize;
+		let mut crem = if is_valid { self.eat_cigar().unwrap().1 } else { 0 } + last_op as usize;
 		let mut xrem = xrem + last_op as usize;		/* might continues from the previous cigar op, possibly insertion */
 		let mut op = last_op;						/* insertion, deletion, or mismatch */
 
@@ -556,16 +584,16 @@ impl<'a, 'b> Builder<'a> {
 		skipped on decoding. we have to tell the decoder the head insertion must not
 		be ignored by adding one more insertion.
 		*/
-		let c = self.peek_cigar()?;
+		let op = Self::canonize_op(self.peek_cigar_op()?);
 		// debug!("c({}, {})", c.op(), c.len());
-		if c.op() == CigarOp::Ins as u32 {
+		if op == CigarOp::Ins as u32 {
 			xrem = self.eat_md_eq();
 
 			/* op iterator not forwarded here */
 			self.push_op(0, CompressMark::Ins as u32);
 			self.ins.write(&[0]).ok()?;	/* dummy insertion marker for this */
 
-		} else if c.op() == CigarOp::Match as u32 {
+		} else if op == CigarOp::Match as u32 {
 			xrem = self.eat_md_eq();
 
 			/*
@@ -579,21 +607,21 @@ impl<'a, 'b> Builder<'a> {
 		'outer: loop {
 			macro_rules! peek_or_break {
 				( $self: expr ) => ({
-					match $self.peek_cigar() {
+					match $self.peek_cigar_op() {
 						None    => { break 'outer; },
-						Some(x) => x
+						Some(x) => Self::canonize_op(x)
 					}
 				});
 			}
 
 			/* deletion-match pair */
 			loop {
-				let c = peek_or_break!(self);
-				if c.op() != CigarOp::Del as u32 { break; }
-				// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar.as_slice().len());
+				let op = peek_or_break!(self);
+				if op != CigarOp::Del as u32 { break; }
+				// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar_rem());
 
 				/* the CIGAR ends with deletion; must be treated specially */
-				if self.cigar.as_slice().len() < 2 { break 'outer; }
+				if self.cigar_rem() < 2 { break 'outer; }
 
 				/* push deletion-match pair, then parse next eq length */
 				let op = self.eat_del()?;
@@ -603,14 +631,14 @@ impl<'a, 'b> Builder<'a> {
 			}
 
 			/* it's insertion-match pair when it appeared not be deletion-match */
-			let c = peek_or_break!(self);
-			if c.op() != CigarOp::Ins as u32 {
+			let op = peek_or_break!(self);
+			if op != CigarOp::Ins as u32 {
 				return None;			/* if not, we regard it broken */
 			}
-			// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar.as_slice().len());
+			// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar_rem());
 
 			/* the CIGAR ends with insertion; must be treated specially */
-			if self.cigar.as_slice().len() < 2 { break 'outer; }
+			if self.cigar_rem() < 2 { break 'outer; }
 
 			/* push insertion-match pair, update eq length remainder */
 			xrem = self.eat_ins(xrem)?;
@@ -618,14 +646,14 @@ impl<'a, 'b> Builder<'a> {
 		}
 
 		/* CIGAR ends with isolated insertion or deletion */
-		if self.cigar.as_slice().len() > 0 {
-			let c = self.peek_cigar()?;
+		if self.cigar_rem() > 0 {
+			let op = Self::canonize_op(self.peek_cigar_op()?);
 			// debug!("c({}, {})", c.op(), c.len());
 
-			if c.op() == CigarOp::Del as u32 {
+			if op == CigarOp::Del as u32 {
 				let op = self.eat_del()?;
 				self.push_op(op as usize, op);
-			} else if c.op() == CigarOp::Ins as u32 {
+			} else if op == CigarOp::Ins as u32 {
 				self.eat_ins(xrem)?;
 			}
 		}

@@ -756,6 +756,70 @@ mod test {
 	}
 
 	#[test]
+	fn test_udon_build_extended() {
+		compare!(
+			cigar![(Eq, 4)],
+			nucl!("ACGT"),
+			"4",
+			Range { start: 0, end: 0 },
+			"MMMM",
+			"----"
+		);
+		compare!(
+			cigar![(Eq, 30)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTAC"),
+			"30",
+			Range { start: 0, end: 0 },
+			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+			"------------------------------"
+		);
+		compare!(
+			cigar![(Eq, 4), (Mismatch, 1), (Eq, 4)],
+			nucl!("ACGTACGTA"),
+			"4T4",
+			Range { start: 0, end: 0 },
+			"MMMMAMMMM",
+			"---------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_squash() {
+		compare!(
+			cigar![(Match, 2), (Match, 2)],
+			nucl!("ACGT"),
+			"4",
+			Range { start: 0, end: 0 },
+			"MMMM",
+			"----"
+		);
+		compare!(
+			cigar![(Eq, 5), (Mismatch, 1), (Match, 1), (Eq, 2)],
+			nucl!("ACGTACGTA"),
+			"5T3",
+			Range { start: 0, end: 0 },
+			"MMMMMCMMM",
+			"---------"
+		);
+		compare!(
+			cigar![(Ins, 2), (Ins, 2), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"4",
+			Range { start: 0, end: 0 },
+			"MMMM",
+			"I---"
+		);
+		compare!(
+			cigar![(Del, 2), (Del, 2), (Match, 4)],
+			nucl!("ACGT"),
+			"^ACGT4",
+			Range { start: 0, end: 0 },
+			"DDDDMMMM",
+			"--------"
+		);
+	}
+
+	#[test]
 	fn test_udon_decode_match() {
 		compare!(
 			cigar![(Match, 8)],
