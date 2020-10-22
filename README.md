@@ -2,6 +2,13 @@
 
 **Udon** is a tiny library transcoding [BAM CIGAR / MD strings](https://samtools.github.io/hts-specs/) and query sequence into a single augmented compressed CIGAR object. The augmented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit / column compression density and ~2G columns / sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
 
+
+
+* Udon converts a BAM alignment record (MD string required) into a monolithic `Udon` object.
+* `Udon` object keeps all the information of mismatches, insertions, and deletions, including what the query-side bases for mismatches or insertions are.
+* Udon slices alignment record at arbitrary range, and decodes it into an alignment string (equivalent to `"MMMDDMMMCMMMTC"`; encoded as `UdonOp` array) or an alignment ribbon (an array of RGB-alpha's).
+* Udon can fetch insertion sequence located at a specific position (which is indicated by `UdonOp::Ins` flag), and returns it as ASCII string.
+
 ## Examples
 
 ```Rust
@@ -59,10 +66,13 @@ Pileups at different scales, drawn by [ribbon.rs](https://github.com/ocxtal/udon
 ```rust
 impl<'i, 'o> Udon<'o> {
 	pub fn build(cigar: &'i [u32], packed_query: &'i [u8], mdstr: &'i [u8]) -> Option<Box<Udon<'o>>>;
+	pub fn build_alt(cigar: &'i [u32], packed_query_full: &'i [u8], mdstr: &'i [u8]) -> Option<Box<Udon<'o>>>;
 }
 ```
 
-We expect `cigar`, `packed_query`, and `mdstr` are those parsed by [bam](https://docs.rs/bam/0.1.0/bam/) crate. See [example](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs) for the details.
+Builds an `Udon` object. We assume `cigar`, `packed_query`, and `mdstr` are those parsed by [bam](https://docs.rs/bam/0.1.0/bam/) crate. The first function `build` is for complete BAM records with appropriate query field, and the second function `build_alt` is for records that lack their query sequence. In the latter case, the `packed_query_full` argument should be one parsed from the primary alignment that have full-length query sequence. See [example](https://github.com/ocxtal/udon/blob/devel/examples/ribbon.rs) for a simple usage of the `build` function.
+
+*Note: The two functions behave exactly the same for a primary alignment record whose overhangs are encoded as soft clips. The difference of two functions matters only when clips are hard.*
 
 ### Retrieving metadata
 
@@ -85,9 +95,11 @@ impl<'o> Udon<'o> {
 }
 ```
 
-Decode udon into an array of columns or an alignment ribbon. `decode_raw` does the former, placing one `UdonOp` for each byte of the output Vec. When the alignment has an insertion, `UdonOp::Ins` is OR'ed at a column just after the insertion.
+Decodes `Udon` into an array. The array consists of alignment edits (for `decode_raw`; see `UdonOp` for the definition of the edits), or is alignment ribbon (an array of RGB-alpha pairs; for `decode_scaled`).
 
-`decode_scaled` does the latter, first calling `decode_raw` then applying scaling procedure. It adopts approximated Lanzcos (sinc) interpolation for scaling factor (columns / pixel) larger than 1.0.
+For the `decode_raw`, each column (one column per one reference-side base) keeps one or two alignment edit(s). When it has two edits, the first one is an insertion. The other (and single edit case) is either mismatch or deletion. For the mismatches, `UdonOp` distinguishes bases and reports what the query-side base was.
+
+For the `decode_scaled`, each array element keeps color for one or more alignment edits, depending on the value of the scaling factor (`columns_per_pixel` embedded in `UdonScaler`; see below for the details). For example, when `columns_per_pixel` is 3.0, each element is a blend of three edits. The `offset_in_pixels` adjust the fractional position of the ribbon when the start position (the first column) is not aligned to the multiple of the scaling factor. When `columns_per_pixel` is 3.0 and the start position (offset from the left boundary; measured on the reference side) is 10.0, the `offset_in_pixels` should be 0.3333... (= 10.0 % 3.0).
 
 #### Color handling in scaled decoder
 
@@ -112,7 +124,13 @@ impl UdonUtils for [UdonColorPair] {
 }
 ```
 
-`UdonScaler::new()` creates a constant pool for the scaled decoder. It takes color palette along with the scaling factor (columns / pixel constant). Each color in the palette is in (R, G, B, -) format where R comes first element (= placed at the LSB). The output color array of the scaled decoder contains **negated sum** of the column colors, and **should be overlaid onto base color** using `append_on_basecolor`. Additionally it provides gamma correction function (gamma = 2.2) for direct use of the output array for plotting.
+`UdonScaler::new()` creates a constant pool for the scaled decoder. It takes color palette along with the scaling factor (columns / pixel; constant). Each color in the palette is in (R, G, B, -) format where R comes first element (= placed at the LSB). The output color array of the scaled decoder contains **negated sum** of the column colors, and **should be overlaid onto base color** using `append_on_basecolor`. Additionally it provides gamma correction function (gamma = 2.2) for direct use of the output array for plotting.
+
+#### Drawing deletion bars
+
+The two color channels can be used for drawing "deletion bars", as in Figure 1. The first channel renders deletion with white and the second with gray. The other colors being the same, the resulting channels are different only at deletions. Putting the second channel at the center of the ribbon makes the deletion drawn as bars.
+
+*I'm planning to add another channel for insertion markers. To make the channel configuration more elastic, I'm waiting for the const generics, which is to be stable in Rust 2020.*
 
 ### Querying insertion
 
