@@ -1345,7 +1345,7 @@ mod test {
 		compare_ins!(
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 2), (Del, 4), (Match, 2), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
-			format!("{}^ACGT8", BLOCK_PITCH - 2),
+			format!("{}^ACGT6", BLOCK_PITCH - 2),
 			BLOCK_PITCH + 4,
 			"GGGG"
 		);
