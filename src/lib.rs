@@ -64,7 +64,15 @@ impl<'i, 'o> Udon<'o> {
 
 	/* builders */
 	pub fn build(cigar: &'i [u32], packed_query: &'i [u8], mdstr: &'i [u8]) -> Option<Box<Udon<'o>>> {
-		let index = Index::build(cigar, packed_query, mdstr)?;
+		let index = Index::build(cigar, packed_query, false, mdstr)?;
+		let udon = unsafe {
+			Box::<Udon<'o>>::from_raw(Box::into_raw(index) as *mut Udon)
+		};
+		Some(udon)
+	}
+
+	pub fn build_alt(cigar: &'i [u32], packed_query_primary: &'i [u8], mdstr: &'i [u8]) -> Option<Box<Udon<'o>>> {
+		let index = Index::build(cigar, packed_query_primary, true, mdstr)?;
 		let udon = unsafe {
 			Box::<Udon<'o>>::from_raw(Box::into_raw(index) as *mut Udon)
 		};

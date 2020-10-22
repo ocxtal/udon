@@ -15,7 +15,7 @@ use std::slice::{ Iter, IterMut };
 /* builder APIs */
 impl<'a, 'b> Index<'a> {
 
-	pub(super) fn build(cigar: &'b [u32], packed_query: &'b [u8], mdstr: &'b [u8]) -> Option<Box<Index<'a>>> {
+	pub(super) fn build(cigar: &'b [u32], packed_query: &'b [u8], is_full: bool, mdstr: &'b [u8]) -> Option<Box<Index<'a>>> {
 		/*
 		Note:
 		This function creates box for `Udon` but it has a flaw that the created box has
@@ -31,10 +31,10 @@ impl<'a, 'b> Index<'a> {
 		/* size_of::<u32>() == size_of::<Cigar>(); for compatibility with bam streamed reader */
 		let cigar = unsafe { transmute::<&'b [u32], &'b [Cigar]>(cigar) };
 
-		Self::build_core(cigar, packed_query, mdstr)
+		Self::build_core(cigar, packed_query, is_full, mdstr)
 	}
 
-	fn build_core(cigar: &'b [Cigar], packed_query: &'b [u8], mdstr: &'b [u8]) -> Option<Box<Index<'a>>> {
+	fn build_core(cigar: &'b [Cigar], packed_query: &'b [u8], is_full: bool, mdstr: &'b [u8]) -> Option<Box<Index<'a>>> {
 		let mut buf = Vec::<u8>::new();
 
 		/* header always at the head */
@@ -45,7 +45,7 @@ impl<'a, 'b> Index<'a> {
 		assert!(range.start == 0);
 		assert!(range.end == size_of::<Index>());
 
-		return match Precursor::build_core(buf, cigar, packed_query, mdstr) {
+		return match Precursor::build_core(buf, cigar, packed_query, is_full, mdstr) {
 			(_, None) => None,
 			(buf, Some(precursor)) => Some(Self::compose_box(buf, precursor))
 		}
@@ -120,50 +120,39 @@ without clips along with clipped lengths.
 Clipped length is defined as the number of bases to be removed from the matched query
 sequence. Thus (head, tail) = (0, 0) is returned for soft-clipped alignment.
 */
-#[derive(Copy, Clone, Default)]
-struct QueryClip {
-	head: usize,
-	tail: usize
+fn is_clip(c: Cigar) -> Option<(bool, usize)> {
+	let op = c.op();
+
+	if op != CigarOp::SoftClip as u32 && op != CigarOp::HardClip as u32 {
+		/* not a clip */
+		return None;
+	}
+
+	/* (is_clip, length) */
+	return Some((op == CigarOp::SoftClip as u32, c.len() as usize));
 }
 
-fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], QueryClip)> {
+#[derive(Copy, Clone, Default)]
+struct Clip {
+	is_soft: bool,
+	len: usize
+}
 
-	/* cigar length must be at least one */
-	if cigar.len() == 0 { return None; }
+fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], Clip)> {
 
-	let mut cigar = cigar;
-	let mut clip = QueryClip {
-		head: 0,
-		tail: 0
+	/* strip tail first */
+	if cigar.len() == 0 { return None; }		/* cigar length must be at least one */
+	let cigar = match is_clip(cigar[cigar.len() - 1]) {
+		None         => cigar,
+		Some((_, _)) => cigar.split_last()?.1
 	};
 
-	/* strip head */ {
-		let head = cigar[0];
-		if head.op() == CigarOp::SoftClip as u32 {
-			/* query string is not clipped so we have to do it */
-			clip.head = head.len() as usize;
-
-			let (_, body) = cigar.split_first()?;
-			cigar = body;
-		} else if head.op() == CigarOp::HardClip as u32 {
-			let (_, body) = cigar.split_first()?;
-			cigar = body;
-		}
-	}
-
-	/* strip tail */ {
-		let tail = cigar[cigar.len() - 1];
-		if tail.op() == CigarOp::SoftClip as u32 {
-			clip.tail = tail.len() as usize;
-
-			let (_, body) = cigar.split_last()?;
-			cigar = body;
-		} else if tail.op() == CigarOp::HardClip as u32 {
-			let (_, body) = cigar.split_last()?;
-			cigar = body;
-		}
-	}
-	return Some((cigar, clip));
+	/* strip head */
+	if cigar.len() == 0 { return None; }		/* check again */
+	return match is_clip(cigar[0]) {
+		None    => Some((cigar,                  Clip { is_soft: false, len: 0 })),
+		Some(x) => Some((cigar.split_first()?.1, Clip { is_soft: x.0,   len: x.1 }))
+	};
 }
 
 
@@ -217,22 +206,33 @@ pub(super) struct Precursor {
 
 /* build Precursor using Builder internally */
 impl<'a> Precursor {
-	fn build_core(buf: Vec<u8>, cigar: &'a [Cigar], packed_query: &'a [u8], mdstr: &'a [u8]) -> (Vec<u8>, Option<Precursor>) {
+	fn build_core(buf: Vec<u8>, cigar: &'a [Cigar], packed_query: &'a [u8], is_full: bool, mdstr: &'a [u8]) -> (Vec<u8>, Option<Precursor>) {
 		/* save initial offset for unwinding */
 		let base_offset = buf.len();
 
 		/* compose working variables */
-		let (cigar, qclip) = match strip_clips(cigar) {
+		let (cigar, clip) = match strip_clips(cigar) {
 			None => { return (buf, None); },		/* just return buffer (nothing happened) */
-			Some((cigar, qclip)) => (cigar, qclip)
+			Some((cigar, clip)) => (cigar, clip)
 		};
+
+		/*
+		initial offset for query sequence, zero for hard-clipped
+		(or alignment starts from the very beginning of the query)
+
+		qofs becomes non-zero when alignment is soft-clipped or query sequence is fetched from
+		the primary record (the primary alignment generally keeps full-length query sequence)
+		*/
+		let qofs = if is_full || clip.is_soft { clip.len } else { 0 };
+
+		/* initialize state */
 		let mut state = Builder::<'a> {
 			buf:   buf,				/* move */
 			ins:   Vec::new(),
 			cigar: cigar.iter(),	/* iterator for slice is a pair of pointers (ptr, tail) */
 			mdstr: mdstr.iter(),
 			query: packed_query,
-			qofs:  qclip.head		/* initial offset for query sequence, non-zero for soft clipped alignments */
+			qofs:  qofs
 		};
 
 		/* if error detected, unwind destination vector and return it (so that the vector won't lost) */
@@ -270,12 +270,12 @@ impl<'a> Precursor {
 	}
 
 	#[allow(dead_code)]
-	pub unsafe fn build(buf: Vec<u8>, cigar: &'a [u32], packed_query: &'a [u8], mdstr: &'a [u8]) -> (Vec<u8>, Option<Precursor>) {
+	pub unsafe fn build(buf: Vec<u8>, cigar: &'a [u32], packed_query: &'a [u8], is_full: bool, mdstr: &'a [u8]) -> (Vec<u8>, Option<Precursor>) {
 
 		/* for compatibility with bam streamed reader */
 		let cigar = transmute::<&'a [u32], &'a [Cigar]>(cigar);
 
-		let (buf, precursor) = Self::build_core(buf, cigar, packed_query, mdstr);
+		let (buf, precursor) = Self::build_core(buf, cigar, packed_query, is_full, mdstr);
 		match precursor {
 			None    => { debug!("None"); },
 			Some(_) => { debug!("Some"); }
