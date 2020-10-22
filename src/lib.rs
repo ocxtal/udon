@@ -756,7 +756,19 @@ mod test {
 			"3A^CCCC4",
 			Range { start: 0, end: 0 },
 			"MMMTDDDDMMMM",
-			"------------"			/* insertion marker lost */
+			"------------"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_mismatch_ins() {
+		compare!(
+			cigar![(Match, 4), (Ins, 4), (Match, 4)],
+			nucl!("ACGTACGT"),
+			"3A4",
+			Range { start: 0, end: 0 },
+			"MMMTMMMM",
+			"----I---"
 		);
 	}
 
@@ -816,6 +828,14 @@ mod test {
 			"5T3",
 			Range { start: 0, end: 0 },
 			"MMMMMCMMM",
+			"---------"
+		);
+		compare!(
+			cigar![(Eq, 5), (Mismatch, 1), (Mismatch, 1), (Eq, 2)],
+			nucl!("ACGTACGTA"),
+			"5T0T2",
+			Range { start: 0, end: 0 },
+			"MMMMMCGMM",
 			"---------"
 		);
 		compare!(
