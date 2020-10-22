@@ -312,12 +312,12 @@ mod test {
 	}
 
 	macro_rules! compare {
-		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $flat: expr, $ins: expr ) => ({
+		( $build: expr, $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $flat: expr, $ins: expr ) => ({
 			// let v = Vec::<u8>::new();
 			let c = $cigar;
 			let n = $nucl;
 			let m = $mdstr;
-			let u = match Udon::build(&c, &n, &m.as_bytes()) {
+			let u = match $build(&c, &n, &m.as_bytes()) {
 				None => {
 					assert!(false, "failed to build index");
 					return;
@@ -341,11 +341,11 @@ mod test {
 	}
 
 	macro_rules! compare_ins {
-		( $cigar: expr, $nucl: expr, $mdstr: expr, $pos: expr, $ins_seq: expr ) => ({
+		( $build: expr, $cigar: expr, $nucl: expr, $mdstr: expr, $pos: expr, $ins_seq: expr ) => ({
 			let c = $cigar;
 			let n = $nucl;
 			let m = $mdstr;
-			let u = match Udon::build(&c, &n, &m.as_bytes()) {
+			let u = match $build(&c, &n, &m.as_bytes()) {
 				None => {
 					assert!(false, "failed to build index");
 					return;
@@ -371,11 +371,11 @@ mod test {
 	const MIST: [[u8; 4]; 2] = [[0xff, 0x00, 0x00, 0x00], [0xff, 0x00, 0x00, 0x00]];
 
 	macro_rules! compare_color {
-		( $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr, $color_factor: expr, $alpha_factor: expr ) => ({
+		( $build: expr, $cigar: expr, $nucl: expr, $mdstr: expr, $range: expr, $offset: expr, $scale: expr, $ribbon: expr, $color_factor: expr, $alpha_factor: expr ) => ({
 			let c = $cigar;
 			let n = $nucl;
 			let m = $mdstr;
-			let u = match Udon::build(&c, &n, &m.as_bytes()) {
+			let u = match $build(&c, &n, &m.as_bytes()) {
 				None => {
 					assert!(false, "failed to build index");
 					return;
@@ -421,7 +421,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_match() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4)],
 			nucl!("ACGT"),
 			"4",
@@ -429,7 +429,7 @@ mod test {
 			"MMMM",
 			"----"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30",
@@ -437,7 +437,7 @@ mod test {
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
 			"------------------------------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 31)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACG"),
 			"31",
@@ -445,7 +445,7 @@ mod test {
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
 			"-------------------------------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 32)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"32",
@@ -453,7 +453,7 @@ mod test {
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
 			"--------------------------------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 128)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"128",
@@ -465,7 +465,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_del() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 1), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4^A4",
@@ -473,7 +473,7 @@ mod test {
 			"MMMMDMMMM",
 			"---------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 3), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4^AGG4",
@@ -481,7 +481,7 @@ mod test {
 			"MMMMDDDMMMM",
 			"-----------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4^AAAC4",
@@ -489,7 +489,7 @@ mod test {
 			"MMMMDDDDMMMM",
 			"------------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 11), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4^GATAGATAGGG4",
@@ -501,7 +501,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_ins() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Ins, 1), (Match, 4)],
 			nucl!("ACGTACGTA"),
 			"8",
@@ -509,7 +509,7 @@ mod test {
 			"MMMMMMMM",
 			"----I---"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Ins, 2), (Match, 4)],
 			nucl!("ACGTACGTAC"),
 			"8",
@@ -521,7 +521,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_mismatch() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 10)],
 			nucl!("ACGTACGTAC"),
 			"4T5",
@@ -529,7 +529,7 @@ mod test {
 			"MMMMAMMMMM",
 			"----------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 10)],
 			nucl!("ACGTACGTAC"),
 			"4T0C4",
@@ -537,7 +537,7 @@ mod test {
 			"MMMMACMMMM",
 			"----------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 10)],
 			nucl!("ACGTACGTAC"),
 			"4T1A0T2",
@@ -550,7 +550,7 @@ mod test {
 	#[test]
 	fn test_udon_build_cont_mismatch() {
 		/* continuous flag */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 34)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30T3",
@@ -558,7 +558,7 @@ mod test {
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMGMMM",
 			"----------------------------------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 64)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"60T3",
@@ -571,7 +571,7 @@ mod test {
 	#[test]
 	fn test_udon_build_cont_del() {
 		/* continuous flag */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30^ACGT4",
@@ -579,7 +579,7 @@ mod test {
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMDDDDMMMM",
 			"--------------------------------------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 60), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"60^ACGT4",
@@ -592,7 +592,7 @@ mod test {
 	#[test]
 	fn test_udon_build_cont_ins() {
 		/* continuous flag */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"34",
@@ -600,7 +600,7 @@ mod test {
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
 			"------------------------------I---"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 60), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"64",
@@ -612,7 +612,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_softclip() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(SoftClip, 10), (Match, 10)],
 			nucl!("ACGTACGTACGTACGTACGT"),
 			"4T5",
@@ -620,7 +620,7 @@ mod test {
 			"MMMMGMMMMM",
 			"----------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 10), (SoftClip, 10)],
 			nucl!("ACGTACGTACGTACGTACGT"),
 			"4T5",
@@ -628,7 +628,7 @@ mod test {
 			"MMMMAMMMMM",
 			"----------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(SoftClip, 10), (Match, 10), (SoftClip, 10)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTAC"),
 			"4T5",
@@ -640,7 +640,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_hardclip() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(HardClip, 10), (Match, 10)],
 			nucl!("GTACGTACGT"),
 			"4T5",
@@ -648,7 +648,7 @@ mod test {
 			"MMMMGMMMMM",
 			"----------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 10), (HardClip, 10)],
 			nucl!("ACGTACGTAC"),
 			"4T5",
@@ -656,7 +656,7 @@ mod test {
 			"MMMMAMMMMM",
 			"----------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(HardClip, 10), (Match, 10), (HardClip, 10)],
 			nucl!("GTACGTACGT"),
 			"4T5",
@@ -667,8 +667,36 @@ mod test {
 	}
 
 	#[test]
+	fn test_udon_build_alt() {
+		compare!(Udon::build_alt,
+			cigar![(HardClip, 10), (Match, 10)],
+			nucl!("ACGTACGTACGTACGTACGT"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMGMMMMM",
+			"----------"
+		);
+		compare!(Udon::build_alt,
+			cigar![(Match, 10), (HardClip, 10)],
+			nucl!("ACGTACGTACACGTACGTAC"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMAMMMMM",
+			"----------"
+		);
+		compare!(Udon::build_alt,
+			cigar![(HardClip, 10), (Match, 10), (HardClip, 10)],
+			nucl!("ACGTACGTACGTACGTACGTACGTACGTAC"),
+			"4T5",
+			Range { start: 0, end: 0 },
+			"MMMMGMMMMM",
+			"----------"
+		);
+	}
+
+	#[test]
 	fn test_udon_build_head_del() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Del, 4), (Match, 4)],
 			nucl!("ACGT"),
 			"^ACGT4",
@@ -680,7 +708,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_head_ins() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Ins, 4), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4",
@@ -692,7 +720,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_tail_del() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 4)],
 			nucl!("ACGT"),
 			"4^ACGT",
@@ -704,7 +732,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_tail_ins() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Ins, 4)],
 			nucl!("ACGTACGT"),
 			"4",
@@ -717,7 +745,7 @@ mod test {
 	#[test]
 	fn test_udon_build_del_ins() {
 		/* not natural as CIGAR string but sometimes appear in real data */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
 			"4^CCCC4",
@@ -725,7 +753,7 @@ mod test {
 			"MMMMDDDDMMMM",
 			"--------I---"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 4), (Ins, 4), (Del, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTGGGGAAAAACGT"),
 			"4^CCCC0^TTTT4",		/* is this correct? */
@@ -738,7 +766,7 @@ mod test {
 	#[test]
 	fn test_udon_build_ins_del() {
 		/* also not natural */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Del, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
 			"4^CCCC4",
@@ -746,7 +774,7 @@ mod test {
 			"MMMMDDDDMMMM",
 			"------------"			/* insertion marker lost */
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Del, 4), (Ins, 4), (Del, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
 			"4^CCCC0^AAAA4",
@@ -758,7 +786,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_mismatch_del() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
 			"3A0^CCCC4",
@@ -770,7 +798,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_mismatch_ins() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"3A4",
@@ -782,7 +810,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_complex() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(SoftClip, 7), (Match, 4), (Ins, 1), (Match, 4), (Del, 1), (Match, 2), (Del, 7), (Match, 40), (HardClip, 15)],
 			nucl!("TTTTTTTACGTACGTACGACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"8^A2^ACGTACG4T9A0C0G23",
@@ -794,7 +822,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_extended() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Eq, 4)],
 			nucl!("ACGT"),
 			"4",
@@ -802,7 +830,7 @@ mod test {
 			"MMMM",
 			"----"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Eq, 30)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30",
@@ -810,7 +838,7 @@ mod test {
 			"MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
 			"------------------------------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Eq, 4), (Mismatch, 1), (Eq, 4)],
 			nucl!("ACGTACGTA"),
 			"4T4",
@@ -822,7 +850,7 @@ mod test {
 
 	#[test]
 	fn test_udon_build_squash() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 2), (Match, 2)],
 			nucl!("ACGT"),
 			"4",
@@ -830,7 +858,7 @@ mod test {
 			"MMMM",
 			"----"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Eq, 5), (Mismatch, 1), (Match, 1), (Eq, 2)],
 			nucl!("ACGTACGTA"),
 			"5T3",
@@ -838,7 +866,7 @@ mod test {
 			"MMMMMCMMM",
 			"---------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Eq, 5), (Mismatch, 1), (Mismatch, 1), (Eq, 2)],
 			nucl!("ACGTACGTA"),
 			"5T0T2",
@@ -846,7 +874,7 @@ mod test {
 			"MMMMMCGMM",
 			"---------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Ins, 2), (Ins, 2), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4",
@@ -854,7 +882,7 @@ mod test {
 			"MMMM",
 			"I---"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Del, 2), (Del, 2), (Match, 4)],
 			nucl!("ACGT"),
 			"^ACGT4",
@@ -866,7 +894,7 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_match() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 8)],
 			nucl!("ACGTACGT"),
 			"8",
@@ -878,7 +906,7 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_mismatch() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 8)],
 			nucl!("ACGTACGT"),
 			"4T3",
@@ -890,7 +918,7 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_del() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Del, 1), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4^T4",
@@ -902,7 +930,7 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_ins() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 4), (Ins, 1), (Match, 4)],
 			nucl!("ACGTACGTA"),
 			"8",
@@ -915,7 +943,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_cont_mismatch() {
 		/* mismatch on boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 34)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30T3",
@@ -923,7 +951,7 @@ mod test {
 			"GMMM",
 			"----"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 64)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"60T3",
@@ -933,7 +961,7 @@ mod test {
 		);
 
 		/* skip one */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 34)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30T3",
@@ -946,7 +974,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_cont_del() {
 		/* deletion on boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30^ACGT4",
@@ -954,7 +982,7 @@ mod test {
 			"DDDDMMMM",
 			"--------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 60), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"60^ACGT4",
@@ -964,7 +992,7 @@ mod test {
 		);
 
 		/* skipping one */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30^ACGT4",
@@ -974,7 +1002,7 @@ mod test {
 		);
 
 		/* leaving one */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30), (Del, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"30^ACGT4",
@@ -987,7 +1015,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_cont_ins() {
 		/* insertion on boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"34",
@@ -995,7 +1023,7 @@ mod test {
 			"MMMM",
 			"I---"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 60), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"),
 			"64",
@@ -1004,7 +1032,7 @@ mod test {
 			"I---"
 		);
 		/* skip one */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 30), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTACGTACGTACGTACGTACGTACGTAC"),
 			"34",
@@ -1016,7 +1044,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_poll_match() {
 		/* test block polling */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}", BLOCK_PITCH + 8),
@@ -1024,7 +1052,7 @@ mod test {
 			"MMMMMMMM",
 			"--------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}", BLOCK_PITCH + 8),
@@ -1034,7 +1062,7 @@ mod test {
 		);
 
 		/* longer */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 21 * BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; 21 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}", 21 * BLOCK_PITCH + 8),
@@ -1042,7 +1070,7 @@ mod test {
 			"MMMMMMMM",
 			"--------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 21 * BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; 21 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}", 21 * BLOCK_PITCH + 8),
@@ -1054,7 +1082,7 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_poll_mismatch() {
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}T3", BLOCK_PITCH + 4),
@@ -1062,7 +1090,7 @@ mod test {
 			"MMMMMMAM",
 			"--------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}T3", BLOCK_PITCH + 4),
@@ -1072,7 +1100,7 @@ mod test {
 		);
 
 		/* mismatch on block boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}T7", BLOCK_PITCH),
@@ -1081,7 +1109,7 @@ mod test {
 			"----"
 		);
 		/* mismatch right before block boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}T8", BLOCK_PITCH - 1),
@@ -1094,7 +1122,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_poll_mismatch_long() {
 		/* much longer */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 321 * BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; 321 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}T3", 321 * BLOCK_PITCH + 4),
@@ -1102,7 +1130,7 @@ mod test {
 			"MMMMMMAM",
 			"--------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 321 * BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; 321 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}T3", 321 * BLOCK_PITCH + 4),
@@ -1110,7 +1138,7 @@ mod test {
 			"MMAM",
 			"----"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, 321 * BLOCK_PITCH + 8)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; 321 * BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}T7", 321 * BLOCK_PITCH),
@@ -1123,7 +1151,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_poll_del() {
 		/* boundary on boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH), (Del, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}^ACGT4", BLOCK_PITCH),
@@ -1131,7 +1159,7 @@ mod test {
 			"MMDDDDMM",
 			"--------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH), (Del, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}^ACGT4", BLOCK_PITCH),
@@ -1144,7 +1172,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_poll_del2() {
 		/* over boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH - 2), (Del, 4), (Match, 6)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}^ACGT6", BLOCK_PITCH - 2),
@@ -1152,7 +1180,7 @@ mod test {
 			"DDDDMMMM",
 			"--------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH - 2), (Del, 4), (Match, 6)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}^ACGT6", BLOCK_PITCH - 2),
@@ -1160,7 +1188,7 @@ mod test {
 			"DDMMMM",
 			"------"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH - 2), (Del, 4), (Match, 6)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}^ACGT6", BLOCK_PITCH - 2),
@@ -1173,7 +1201,7 @@ mod test {
 	#[test]
 	fn test_udon_decode_poll_ins() {
 		/* boundary on boundary */
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH - 2), (Ins, 4), (Match, 6)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}", BLOCK_PITCH + 4),
@@ -1181,7 +1209,7 @@ mod test {
 			"MMMM",
 			"I---"
 		);
-		compare!(
+		compare!(Udon::build,
 			cigar![(Match, BLOCK_PITCH - 2), (Ins, 4), (Match, 6)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGT")),
 			format!("{}", BLOCK_PITCH + 4),
@@ -1193,21 +1221,21 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGT"),
 			"8",
 			4,
 			"ACGT"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGT"),
 			"8",
 			3,
 			"*"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGT"),
 			"8",
@@ -1218,21 +1246,21 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins_double() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTGGGGACGT"),
 			"12",
 			8,
 			"GGGG"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTGGGGACGT"),
 			"12",
 			7,
 			"*"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("ACGTACGTACGTGGGGACGT"),
 			"12",
@@ -1243,21 +1271,21 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins_head() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("CCCCACGTACGTACGT"),
 			"8",
 			0,
 			"CCCC"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("CCCCACGTACGTACGT"),
 			"8",
 			1,
 			"*"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!("CCCCACGTGGGGACGT"),
 			"8",
@@ -1268,21 +1296,21 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins_poll() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
 			format!("{}", BLOCK_PITCH + 8),
 			BLOCK_PITCH + 4,
 			"ACGT"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
 			format!("{}", BLOCK_PITCH + 8),
 			BLOCK_PITCH + 3,
 			"*"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGT")),
 			format!("{}", BLOCK_PITCH + 8),
@@ -1293,21 +1321,21 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins_double_poll() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 12),
 			BLOCK_PITCH + 8,
 			"GGGG"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 12),
 			BLOCK_PITCH + 7,
 			"*"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, BLOCK_PITCH + 4), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}", from_utf8(&['A' as u8; BLOCK_PITCH]).unwrap(), "ACGTACGTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 12),
@@ -1318,21 +1346,21 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins_double_poll2() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 4),
 			4,
 			"CCCC"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 4),
 			BLOCK_PITCH - 4,
 			"TTTT"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "ACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 4),
@@ -1343,28 +1371,28 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins_head_double_poll() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 4),
 			0,
 			"GGGG"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 4),
 			4,
 			"CCCC"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 4),
 			BLOCK_PITCH - 4,
 			"TTTT"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 4), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}", BLOCK_PITCH + 4),
@@ -1375,21 +1403,21 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_query_ins_head_double_poll2() {
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 8), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGTACGT")),
 			format!("{}", BLOCK_PITCH + 8),
 			BLOCK_PITCH + 4,
 			"ACGT"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Match, 2), (Del, 4), (Match, 2), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTACGTGGGGACGT")),
 			format!("{}^ACGT6", BLOCK_PITCH - 2),
 			BLOCK_PITCH + 4,
 			"GGGG"
 		);
-		compare_ins!(
+		compare_ins!(Udon::build,
 			cigar![(Ins, 4), (Match, 4), (Ins, 4), (Match, BLOCK_PITCH - 8), (Ins, 4), (Del, 8), (Ins, 4), (Match, 4)],
 			nucl!(format!("{}{}{}", "GGGGACGTCCCC", from_utf8(&['A' as u8; BLOCK_PITCH - 8]).unwrap(), "TTTTGGGGACGT")),
 			format!("{}^ACGTACGT4", BLOCK_PITCH - 4),
@@ -1400,7 +1428,7 @@ mod test {
 
 	#[test]
 	fn test_udon_decode_scaled() {
-		compare_color!(
+		compare_color!(Udon::build,
 			cigar![(Match, 4), (Del, 1), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4^A4",
@@ -1411,7 +1439,7 @@ mod test {
 			1.0 / (1.0f64.log(2.5).max(1.0) + 1.0f64 / 5.0)
 		);
 
-		compare_color!(
+		compare_color!(Udon::build,
 			cigar![(Match, 4), (Del, 1), (Match, 4)],
 			nucl!("ACGTACGT"),
 			"4^A4",
@@ -1424,7 +1452,7 @@ mod test {
 
 		/* we need more tests but how to do */
 		/*
-		compare_color!(
+		compare_color!(Udon::build,
 			cigar![(Match, 9)],
 			nucl!("ACGTACGTA"),
 			"G0T0A0C0G0T0A0C0G",
