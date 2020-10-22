@@ -749,6 +749,18 @@ mod test {
 	}
 
 	#[test]
+	fn test_udon_build_mismatch_del() {
+		compare!(
+			cigar![(Match, 4), (Del, 4), (Match, 4)],
+			nucl!("ACGTGGGGACGT"),
+			"3A^CCCC4",
+			Range { start: 0, end: 0 },
+			"MMMTDDDDMMMM",
+			"------------"			/* insertion marker lost */
+		);
+	}
+
+	#[test]
 	fn test_udon_build_complex() {
 		compare!(
 			cigar![(SoftClip, 7), (Match, 4), (Ins, 1), (Match, 4), (Del, 1), (Match, 2), (Del, 7), (Match, 40), (HardClip, 15)],
