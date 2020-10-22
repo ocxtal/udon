@@ -753,7 +753,7 @@ mod test {
 		compare!(
 			cigar![(Match, 4), (Del, 4), (Match, 4)],
 			nucl!("ACGTGGGGACGT"),
-			"3A^CCCC4",
+			"3A0^CCCC4",
 			Range { start: 0, end: 0 },
 			"MMMTDDDDMMMM",
 			"------------"

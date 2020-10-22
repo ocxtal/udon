@@ -9,6 +9,7 @@ use std::mem::{ align_of, size_of, transmute, forget };
 use std::ops::Range;
 use std::ptr::copy_nonoverlapping;
 use std::slice::{ Iter, IterMut };
+// use std::str::from_utf8;
 
 
 /* builder APIs */
@@ -169,7 +170,7 @@ fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], QueryClip)> {
 /* copy 4bit-encoded bases, for storing insertions */
 fn copy_packed_nucl(src: &[u8], dst: &mut [u8], ofs: usize, len: usize) {
 
-	// debug!("{}, {}, {:?}", ofs, len, src);
+	// debug!("copy, ofs({}), len({})", ofs, len);
 
 	/* very very very very very very very very very naive way though fine */
 	for i in 0 .. len {
@@ -189,7 +190,7 @@ fn copy_packed_nucl(src: &[u8], dst: &mut [u8], ofs: usize, len: usize) {
 			dst[i / 2] |= c<<4;
 		}
 
-		// println!("push {} at {}, ({}, {})", c, i, pos, src[pos / 2]);
+		// debug!("push {} at {}, ({}, {})", c, i, pos, src[pos / 2]);
 	}
 
 	// debug!("{:?}", &dst[0 .. (len + 1) / 2]);
@@ -239,7 +240,7 @@ impl<'a> Precursor {
 			match $expr {
 				/* equivalent to tail error handling in C? (I'm not sure how rustc treat this...) */
 				None => {
-					debug!("unwinding");
+					// debug!("unwinding");
 					let mut buf = state.buf;
 					buf.resize(base_offset, 0);		/* unwind buffer for cleaning up errored sequence */
 					return (buf, None);
@@ -247,6 +248,8 @@ impl<'a> Precursor {
 				Some(val) => val
 			}
 		}}
+
+		// debug!("start");
 
 		/* parse input op array */
 		let op = unwrap_or_unwind!(state.parse_cigar());
@@ -411,6 +414,7 @@ impl<'a, 'b> Builder<'a> {
 
 		let op = Self::canonize_op(c.op() as u32);
 		let mut len = c.len() as usize;
+		// debug!("first op({:?}), len({:?})", op, len);
 
 		while self.cigar_rem() > 0 {
 			let next_op = Self::canonize_op(self.peek_cigar_op()?);
@@ -418,6 +422,8 @@ impl<'a, 'b> Builder<'a> {
 
 			let c = self.cigar.next()?;
 			len += c.len() as usize;
+
+			// debug!("append op({:?}), len({:?})", c.op(), c.len());
 		}
 
 		return Some((op, len));
@@ -435,7 +441,20 @@ impl<'a, 'b> Builder<'a> {
 		if self.mdstr.as_slice().len() < 3 {
 			return false;
 		}
-		return self.mdstr.as_slice()[1] == '0' as u8;
+
+		/*
+		note: deletion after mismatch is encoded as follows:
+
+		...A0^TTT...
+		   ^ mismatch
+		      ^ deletion
+
+		so the `is_double_mismatch` function must see if the char after
+		zero is '^' or nucleotide to properly distinguish double mismatch
+		from deletion-after-mismatch. (see `test_udon_build_mismatch_del`)
+		*/
+		let md = self.mdstr.as_slice();
+		return md[1] == '0' as u8 && md[2] != '^' as u8;
 	}
 
 	/* writers, on top of impl Writer for Vec<u8> */
@@ -526,14 +545,14 @@ impl<'a, 'b> Builder<'a> {
 			// debug!("eat_match mismatch?, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
 
 			while self.is_double_mismatch() {
-				// debug!("eat_match, crem({}), {:?}", crem, from_utf8(self.mdstr.as_slice()));
+				// debug!("eat_match, crem({}), {:?}", crem, from_utf8(&self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(16)]));
 
 				let c = self.next_base();
 				self.push_op(1, c);		/* this chunk contains only a single mismatch */
 				self.mdstr.nth(1)?;
 				crem -= 1;
 			}
-			// debug!("eat_match, crem({}), {:?}", crem, from_utf8(self.mdstr.as_slice()));
+			// debug!("eat_match, crem({}), {:?}", crem, from_utf8(&self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(16)]));
 
 			op = self.next_base();		/* we only have a single mismatch remaining, will be combined to succeeding matches */
 			self.mdstr.nth(0)?;
@@ -552,6 +571,9 @@ impl<'a, 'b> Builder<'a> {
 		self.qofs -= xrem;
 
 		// debug!("eat_match, done, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
+
+		/* invariant condition: if match to reference (md) continues, an insertion must follow */
+		assert!(xrem == 0 || self.peek_cigar_op().unwrap() == CigarOp::Ins as u32);
 		return Some(xrem);				/* nonzero if insertion follows */
 	}
 
@@ -585,7 +607,7 @@ impl<'a, 'b> Builder<'a> {
 		be ignored by adding one more insertion.
 		*/
 		let op = Self::canonize_op(self.peek_cigar_op()?);
-		// debug!("c({}, {})", c.op(), c.len());
+		// debug!("c({}), rem({})", op, self.cigar_rem());
 		if op == CigarOp::Ins as u32 {
 			xrem = self.eat_md_eq();
 
@@ -618,7 +640,7 @@ impl<'a, 'b> Builder<'a> {
 			loop {
 				let op = peek_or_break!(self);
 				if op != CigarOp::Del as u32 { break; }
-				// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar_rem());
+				// debug!("op({}), rem({})", op, self.cigar_rem());
 
 				/* the CIGAR ends with deletion; must be treated specially */
 				if self.cigar_rem() < 2 { break 'outer; }
@@ -635,7 +657,7 @@ impl<'a, 'b> Builder<'a> {
 			if op != CigarOp::Ins as u32 {
 				return None;			/* if not, we regard it broken */
 			}
-			// debug!("op({}), len({}), remaining cigars({})", c.op(), c.len(), self.cigar_rem());
+			// debug!("op({}), remaining cigars({})", op, self.cigar_rem());
 
 			/* the CIGAR ends with insertion; must be treated specially */
 			if self.cigar_rem() < 2 { break 'outer; }
@@ -648,7 +670,7 @@ impl<'a, 'b> Builder<'a> {
 		/* CIGAR ends with isolated insertion or deletion */
 		if self.cigar_rem() > 0 {
 			let op = Self::canonize_op(self.peek_cigar_op()?);
-			// debug!("c({}, {})", c.op(), c.len());
+			// debug!("c({})", op);
 
 			if op == CigarOp::Del as u32 {
 				let op = self.eat_del()?;
