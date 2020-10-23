@@ -2,12 +2,12 @@
 
 **Udon** is a tiny library transcoding [BAM CIGAR / MD strings](https://samtools.github.io/hts-specs/) and query sequence into a single augmented compressed CIGAR object. The augmented data structure, along with an index to locate substring positions, assists quick drawing of alignment ribbon of arbitrary span with arbitrary scaling. It achieves ~1 bit / column compression density and ~2G columns / sec. (per alignment) decompression throughput on typical real-world Illumina and Nanopore datasets.
 
+### What Udon can do are:
 
-
-* Udon converts a BAM alignment record (MD string required) into a monolithic `Udon` object.
-* `Udon` object keeps all the information of mismatches, insertions, and deletions, including what the query-side bases for mismatches or insertions are.
-* Udon slices alignment record at arbitrary range, and decodes it into an alignment string (equivalent to `"MMMDDMMMCMMMTC"`; encoded as `UdonOp` array) or an alignment ribbon (an array of RGB-alpha's).
-* Udon can fetch insertion sequence located at a specific position (which is indicated by `UdonOp::Ins` flag), and returns it as ASCII string.
+* Converting a BAM alignment record (both CIGAR and MD strings required) into a monolithic `Udon` object.
+* Keeping all the information of mismatches, insertions, and deletions in the `Udon` object, including what the query-side bases for mismatches or insertions are.
+* Slicing alignment record at arbitrary range, and decoding it into an alignment string (equivalent to an alignment string like `"MMMDDMMMCMMMTC"`; encoded as `UdonOp`s) or an alignment ribbon (an array of RGB-alpha's).
+* Fetching insertion sequence located at a specific position (which is indicated by `UdonOp::Ins` flag), and returning it as ASCII string.
 
 ## Examples
 
