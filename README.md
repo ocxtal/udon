@@ -87,19 +87,34 @@ Returns reference side span, excluding soft- and hard-clips at the both ends.
 ### Decode
 
 ```rust
-pub type UdonColorPair = [[u8; 4]; 2];	/* [(r, g, b, alpha); 2] */
-
+/* decode Udon into a raw `UdonOp` array */
+#[repr(u8)]
+pub enum UdonOp {
+	MisA = 0x04 | 0x00,
+	MisC = 0x04 | 0x01,
+	MisG = 0x04 | 0x02,
+	MisT = 0x04 | 0x03,
+	Del  = 0x08,
+	Ins  = 0x10					/* OR-ed with one of the others when a column has two edits (Ins-Del or Ins-Mismatch) */
+}
 impl<'o> Udon<'o> {
 	pub fn decode_raw(&self, ref_range: &Range<usize>) -> Option<Vec<u8>>;
+}
+
+/* decode Udon into an `UdonOp` array then scale it into an alignment ribbon of two RGBalpha channels */
+pub type UdonColorPair = [[u8; 4]; 2];	/* [(R, G, B, alpha); 2] */
+impl<'o> Udon<'o> {
 	pub fn decode_scaled(&self, ref_range: &Range<usize>, offset_in_pixels: f64, scaler: &UdonScaler) -> Option<Vec<UdonColorPair>>;
 }
 ```
 
 Decodes `Udon` into an array. The array consists of alignment edits (for `decode_raw`; see `UdonOp` for the definition of the edits), or is alignment ribbon (an array of RGB-alpha pairs; for `decode_scaled`).
 
-For the `decode_raw`, each column (one column per one reference-side base) keeps one or two alignment edit(s). When it has two edits, the first one is an insertion. The other (and single edit case) is either mismatch or deletion. For the mismatches, `UdonOp` distinguishes bases and reports what the query-side base was.
+For `decode_raw`, each column (one column per one reference-side base) keeps one or two alignment edit(s). When it has two edits, the first one is an insertion of one or more bases. The other (and single edit case) is either a single mismatch or deletion. When it expresses a mismatch, `UdonOp` distinguishes bases and reports what the query-side base was by two-bit flag.
 
-For the `decode_scaled`, each array element keeps color for one or more alignment edits, depending on the value of the scaling factor (`columns_per_pixel` embedded in `UdonScaler`; see below for the details). For example, when `columns_per_pixel` is 3.0, each element is a blend of three edits. The `offset_in_pixels` adjust the fractional position of the ribbon when the start position (the first column) is not aligned to the multiple of the scaling factor. When `columns_per_pixel` is 3.0 and the start position (offset from the left boundary; measured on the reference side) is 10.0, the `offset_in_pixels` should be 0.3333... (= 10.0 % 3.0).
+For `decode_scaled`, each array element keeps color for one or more alignment edits, depending on the value of the scaling factor (`columns_per_pixel` embedded in `UdonScaler`; see below for the details). For example, when `columns_per_pixel` is 3.0, each element is a blend of three edits. The `offset_in_pixels` adjust the fractional position of the ribbon when the start position (the first column) is not aligned to the multiple of the scaling factor. When `columns_per_pixel` is 3.0 and the start position (offset from the left boundary; measured on the reference side) is 10.0, the `offset_in_pixels` should be 0.3333... (= 10.0 % 3.0).
+
+*(Output of `decode_raw` should have been defined as `Option<Vec<UdonOp>>`, and `UdonOp` as a bitfield, not an enum. I want to make this change for consistency and easiness, before the first stable release of this library.)*
 
 #### Color handling in scaled decoder
 
@@ -124,13 +139,15 @@ impl UdonUtils for [UdonColorPair] {
 }
 ```
 
-`UdonScaler::new()` creates a constant pool for the scaled decoder. It takes color palette along with the scaling factor (columns / pixel; constant). Each color in the palette is in (R, G, B, -) format where R comes first element (= placed at the LSB). The output color array of the scaled decoder contains **negated sum** of the column colors, and **should be overlaid onto base color** using `append_on_basecolor`. Additionally it provides gamma correction function (gamma = 2.2) for direct use of the output array for plotting.
+The scaled decoding API requires a scaler object, `UdonScaler`, that holds constants for scaling and coloring as the last argument. The object is created by `UdonScaler::new()` with a scaling factor and a palette. The scaling factor is defined as columns / pixel manner, and each color in the palette is in (R, G, B, -) form where R comes first. The output color array of the scaled decoder contains **negated sum** of the column colors, and **should be overlaid onto base color** using `append_on_basecolor`. Additionally it provides gamma correction function (gamma = 2.2) for direct use of the output array for plotting.
+
+*Note: Since `Udon` object itself is not tied to any scaling factor or color, we can make use of multiple scalers for different scaling factors and colors. For example, when we provide 16 magnification pitches for a visualization app, a natural implementation would be keeping 16 immutable `UdonScaler`s on an array and picking an appropriate one each time when the scale is changed.*
 
 #### Drawing deletion bars
 
 The two color channels can be used for drawing "deletion bars", as in Figure 1. The first channel renders deletion with white and the second with gray. The other colors being the same, the resulting channels are different only at deletions. Putting the second channel at the center of the ribbon makes the deletion drawn as bars.
 
-*I'm planning to add another channel for insertion markers. To make the channel configuration more elastic, I'm waiting for the const generics, which is to be stable in Rust 2020.*
+*(I'm planning to add another channel for insertion markers. To make the channel configuration more elastic, I'm waiting for the const generics, which is to be stable in Rust 2020.)*
 
 ### Querying insertion
 
@@ -190,6 +207,10 @@ Currently No. One reason is that Udon itself omits information of reference-side
 It might be possible to implement an auxilialy data structure, motif array, for conditional colorization. It should be an array of the reference-side sequence, where motif sequence is stored as is and the others are cleared. The motif array is compared to the decoded udon stream, and "modification" flag is set for a series of columns that have a specific match-mismatch pattern. The detected motif region can be colored differently, by extending the `UdonPalette` and `UdonScaler` to treat the modification flag properly.
 
 *(I would appreciate if anyone implement this feature.)*
+
+### Can Udon draw a combined ribbon for paired-end reads?
+
+Currently No, but I'm thinking of adding an API to combine two or more ribbons after drawing. However, even if we have the API, the user need to manage which reads to be connected and how much the reads are apart. Udon itself remains a compression data structure and algorithm for a single alignment record, and unaware of links between different ones.
 
 ## First impression on writing SIMD codes in Rust (2020/9)
 
