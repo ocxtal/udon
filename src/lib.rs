@@ -47,7 +47,7 @@ pub enum UdonOp {
 	MisG = 0x04 | 0x02,
 	MisT = 0x04 | 0x03,
 	Del  = 0x08,
-	Ins  = 0x10				/* may be OR-ed with the others */
+	Ins  = 0x10				/* OR-ed with one of the others when a column has two edits (Ins-Del or Ins-Mismatch) */
 }
 
 
