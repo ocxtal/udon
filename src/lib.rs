@@ -743,6 +743,48 @@ mod test {
 	}
 
 	#[test]
+	fn test_udon_build_head_mismatch() {
+		/* we regard both encodings valid */
+		compare!(Udon::build,
+			cigar![(Match, 4)],
+			nucl!("ACGT"),
+			"T3",
+			Range { start: 0, end: 0 },
+			"AMMM",
+			"----"
+		);
+		compare!(Udon::build,
+			cigar![(Match, 4)],
+			nucl!("ACGT"),
+			"0T3",
+			Range { start: 0, end: 0 },
+			"AMMM",
+			"----"
+		);
+	}
+
+	#[test]
+	fn test_udon_build_tail_mismatch() {
+		/* we regard both encodings valid */
+		compare!(Udon::build,
+			cigar![(Match, 4)],
+			nucl!("ACGT"),
+			"3A",
+			Range { start: 0, end: 0 },
+			"MMMT",
+			"----"
+		);
+		compare!(Udon::build,
+			cigar![(Match, 4)],
+			nucl!("ACGT"),
+			"3A0",
+			Range { start: 0, end: 0 },
+			"MMMT",
+			"----"
+		);
+	}
+
+	#[test]
 	fn test_udon_build_del_ins() {
 		/* not natural as CIGAR string but sometimes appear in real data */
 		compare!(Udon::build,
