@@ -575,7 +575,7 @@ impl<'a, 'b> Builder<'a> {
 		// debug!("eat_match, done, crem({}), xrem({}), qofs({}), cigar({})", crem, xrem, self.qofs, self.cigar_rem());
 
 		/* invariant condition: if match to reference (md) continues, an insertion must follow */
-		assert!(xrem == 0 || self.peek_cigar_op().unwrap() == CigarOp::Ins as u32);
+		// assert!(xrem == 0 || self.peek_cigar_op().unwrap() == CigarOp::Ins as u32);
 		return Some(xrem);				/* nonzero if insertion follows */
 	}
 
