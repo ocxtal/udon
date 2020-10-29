@@ -276,10 +276,12 @@ impl<'a> Precursor {
 		let cigar = transmute::<&'a [u32], &'a [Cigar]>(cigar);
 
 		let (buf, precursor) = Self::build_core(buf, cigar, packed_query, is_full, mdstr);
+		/*
 		match precursor {
 			None    => { debug!("None"); },
 			Some(_) => { debug!("Some"); }
 		};
+		*/
 		(buf, precursor)
 	}
 }
