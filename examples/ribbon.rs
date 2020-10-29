@@ -325,7 +325,7 @@ fn main() {
 			if let Some(TagValue::String(s, _)) = record.tags().get(b"MD") { s } else {
 				panic!("Each BAM record must have MD string. Inspect `samtools calmd` for restoring missing MD strings.")
 			}
-		).expect("Failed to create udon index. Would be a bug.");
+		).expect(&format!("Failed to create udon index. Would be a bug. ({:?})", &record.name()));
 
 		/* compose span, skip if out of the window */
 		let range = Range::<usize> {
@@ -346,7 +346,7 @@ fn main() {
 			&udon_range,
 			offset_in_pixel,
 			&scaler
-		).expect("Failed to decode udon ribbon. Would be a bug.");
+		).expect(&format!("Failed to decode udon ribbon. Would be a bug. ({:?})", &record.name()));
 
 		/* put forward / reverse color then do gamma correction */
 		ribbon.append_on_basecolor(&base_color[record.flag().is_reverse_strand() as usize]).correct_gamma();
