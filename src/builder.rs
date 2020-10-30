@@ -207,6 +207,10 @@ pub(super) struct Precursor {
 /* build Precursor using Builder internally */
 impl<'a> Precursor {
 	fn build_core(buf: Vec<u8>, cigar: &'a [Cigar], packed_query: &'a [u8], is_full: bool, mdstr: &'a [u8]) -> (Vec<u8>, Option<Precursor>) {
+
+		// debug!("start");
+		// debug!("{:?}", from_utf8(&mdstr));
+
 		/* save initial offset for unwinding */
 		let base_offset = buf.len();
 
@@ -248,8 +252,6 @@ impl<'a> Precursor {
 				Some(val) => val
 			}
 		}}
-
-		// debug!("start");
 
 		/* parse input op array */
 		let op = unwrap_or_unwind!(state.parse_cigar());
@@ -432,17 +434,31 @@ impl<'a, 'b> Builder<'a> {
 	}
 
 	/* MD string handling: forward pointer along with atoi */
+	fn strip_zero(&mut self) {
+		let md = self.mdstr.as_slice();
+		if md.len() == 0 || md[0] != '0' as u8 { return; }
+
+		let md = &mut self.mdstr;
+		md.next();
+		return;
+	}
+
+	fn eat_md_del(&mut self, len: usize) -> Option<()> {
+		self.mdstr.nth(len - 1)?;		/* error if starved */
+		self.mdstr.next();				/* not regarded as error for the last element */
+		return Some(());
+	}
+
 	fn eat_md_eq(&mut self) -> usize {
 		return atoi_unchecked(&mut self.mdstr) as usize;
 	}
 
 	/* make MD iterator peekable */
 	fn is_double_mismatch(&self) -> bool {
+		let md = self.mdstr.as_slice();
 
 		/* if the last op is mismatch, MD string ends like "A0" */
-		if self.mdstr.as_slice().len() < 3 {
-			return false;
-		}
+		if md.len() < 3 { return false; }
 
 		/*
 		note: deletion after mismatch is encoded as follows:
@@ -455,7 +471,6 @@ impl<'a, 'b> Builder<'a> {
 		zero is '^' or nucleotide to properly distinguish double mismatch
 		from deletion-after-mismatch. (see `test_udon_build_mismatch_del`)
 		*/
-		let md = self.mdstr.as_slice();
 		return md[1] == '0' as u8 && md[2] != '^' as u8;
 	}
 
@@ -492,8 +507,8 @@ impl<'a, 'b> Builder<'a> {
 		let (op, len) = self.eat_cigar()?;
 		assert!(op == CigarOp::Del as u32);
 
-		self.mdstr.nth(len - 1)?;		/* error if starved */
-		self.mdstr.next();				/* not regarded as error for the last element */
+		self.strip_zero();
+		self.eat_md_del(len)?;
 
 		/* 3 columns at maximum for deletion per chunk */
 		let mut rem = len;
@@ -547,14 +562,14 @@ impl<'a, 'b> Builder<'a> {
 			// debug!("eat_match mismatch?, crem({}), xrem({}), qofs({})", crem, xrem, self.qofs);
 
 			while self.is_double_mismatch() {
-				// debug!("eat_match, crem({}), {:?}", crem, from_utf8(&self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(16)]));
+				// debug!("eat_match, crem({}), md({:?}, {:?})", crem, from_utf8(&self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(32)]), &self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(32)]);
 
 				let c = self.next_base();
 				self.push_op(1, c);		/* this chunk contains only a single mismatch */
 				self.mdstr.nth(1)?;
 				crem -= 1;
 			}
-			// debug!("eat_match, crem({}), {:?}", crem, from_utf8(&self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(16)]));
+			// debug!("eat_match, crem({}), md({:?}, {:?})", crem, from_utf8(&self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(32)]), &self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(32)]);
 
 			op = self.next_base();		/* we only have a single mismatch remaining, will be combined to succeeding matches */
 			self.mdstr.nth(0)?;
@@ -575,7 +590,7 @@ impl<'a, 'b> Builder<'a> {
 		// debug!("eat_match, done, crem({}), xrem({}), qofs({}), cigar({})", crem, xrem, self.qofs, self.cigar_rem());
 
 		/* invariant condition: if match to reference (md) continues, an insertion must follow */
-		// assert!(xrem == 0 || self.peek_cigar_op().unwrap() == CigarOp::Ins as u32);
+		assert!(xrem == 0 || self.peek_cigar_op().unwrap() == CigarOp::Ins as u32);
 		return Some(xrem);				/* nonzero if insertion follows */
 	}
 

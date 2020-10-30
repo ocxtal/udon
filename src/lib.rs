@@ -696,10 +696,19 @@ mod test {
 
 	#[test]
 	fn test_udon_build_head_del() {
+		/* accept both */
 		compare!(Udon::build,
 			cigar![(Del, 4), (Match, 4)],
 			nucl!("ACGT"),
 			"^ACGT4",
+			Range { start: 0, end: 0 },
+			"DDDDMMMM",
+			"--------"
+		);
+		compare!(Udon::build,
+			cigar![(Del, 4), (Match, 4)],
+			nucl!("ACGT"),
+			"0^ACGT4",
 			Range { start: 0, end: 0 },
 			"DDDDMMMM",
 			"--------"
@@ -928,6 +937,14 @@ mod test {
 			cigar![(Del, 2), (Del, 2), (Match, 4)],
 			nucl!("ACGT"),
 			"^ACGT4",
+			Range { start: 0, end: 0 },
+			"DDDDMMMM",
+			"--------"
+		);
+		compare!(Udon::build,
+			cigar![(Del, 2), (Del, 2), (Match, 4)],
+			nucl!("ACGT"),
+			"0^ACGT4",
 			Range { start: 0, end: 0 },
 			"DDDDMMMM",
 			"--------"
