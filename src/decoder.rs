@@ -275,7 +275,7 @@ impl<'a, 'b> Index<'a> {
 			/* rescale to dst array, forward offset */
 			let (next_offset, consumed) = scaler.scale(&mut dst, &buf, offset)?;
 			offset = next_offset;
-			if consumed < buf.len() - consumed { continue; }
+			if buf.len() < consumed || consumed < buf.len() - consumed { continue; }
 
 			let (base, tail) = buf.split_at_mut(consumed);
 			let (base, _) = base.split_at_mut(tail.len());
