@@ -10,11 +10,11 @@ use std::ops::Range;
 
 
 /* architecture-dependent stuffs */
-#[cfg(all(target_arch = "x86_64"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "ssse3"))]
 use core::arch::x86_64::*;
 
-#[cfg(all(target_arch = "aarch64"))]
-use core::arch::aarch64::*;				/* requires nightly */
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+use core::arch::aarch64::*;
 
 
 /* Udon builder and ribbon slicing APIs
@@ -121,7 +121,7 @@ impl<'a, 'b> Index<'a> {
 		SimdAlignedU8::new(&x)
 	};
 
-	#[cfg(all(target_arch = "x86_64"))]
+	#[cfg(all(target_arch = "x86_64", target_feature = "ssse3"))]
 	unsafe fn decode_core_block(dst: &mut [u8], op: u8, ins: u32) -> (usize, u32) {
 
 		/* load constants; expelled out of the innermost loop when inlined */
@@ -141,8 +141,8 @@ impl<'a, 'b> Index<'a> {
 		/* merge deletion / insertion-mismatch vector */
 		let merged = _mm_blendv_epi8(ins_mismatch_mask, del_mask, is_del);
 
-		_mm_storeu_si128(&mut dst[0 .. 16] as *mut [u8] as *mut __m128i, merged);
-		_mm_storeu_si128(&mut dst[16 .. 32] as *mut [u8] as *mut __m128i, _mm_setzero_si128());
+		_mm_storeu_si128(&mut dst[0] as *mut u8 as *mut __m128i, merged);
+		_mm_storeu_si128(&mut dst[16] as *mut u8 as *mut __m128i, _mm_setzero_si128());
 
 		/*
 		compute forward length; 31 is "continuous marker"
@@ -159,10 +159,7 @@ impl<'a, 'b> Index<'a> {
 
 	#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 	unsafe fn decode_core_block(dst: &mut [u8], op: u8, ins: u32) -> (usize, u32) {
-
-		/*
 		/* the following code correspond one-to-one to the x86_64 implementation above */
-
 		let del_mask      = vld1q_u8(Self::DEL_MASK.as_ref() as *const u8);
 		let is_del_thresh = vld1q_s8(Self::IS_DEL_THRESH.as_ref() as *const u8 as *const i8);
 
@@ -171,21 +168,16 @@ impl<'a, 'b> Index<'a> {
 		let is_del = vcgtq_s8(xop, is_del_thresh);			/* signed comparison */
 
 		let marker = if op_marker(op) == CompressMark::Ins as u32 { ins } else { op_marker(op) };
-		let mask = [marker as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-		let ins_mismatch_mask = vld1q_u8(&mask as *const u8);
+		let ins_mismatch_mask = vsetq_lane_u8(marker as u8, vmovq_n_u8(0), 0);
 
 		let merged = vbslq_u8(is_del, del_mask, ins_mismatch_mask);
-		let zero = vld1q_u8(&[0; 16] as *const u8);
-		vst1q_u8(&mut dst[0 .. 16] as *mut u8, merged);
-		vst1q_u8(&mut dst[0 .. 16] as *mut u8, zero);
+		let zero = vmovq_n_u8(0);
+		vst1q_u8(&mut dst[0] as *mut u8, merged);
+		vst1q_u8(&mut dst[16] as *mut u8, zero);
 
 		let next_ins     = if op_is_cont(op) { 0 } else { UdonOp::Ins as u32 };	/* next ins will be masked if 0x1f */
 		let adjusted_len = op_len(op);
 		(adjusted_len, next_ins)
-		*/
-
-		todo!();
-		(0, 0)
 	}
 
 	fn decode_core(&self, dst: &mut Vec<u8>, ref_span: &Range<usize>) -> Option<usize> {
