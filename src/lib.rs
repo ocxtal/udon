@@ -1,5 +1,5 @@
 
-/**
+/*
 @file udon/lib.rs
 @brief udon implementation
 
@@ -38,7 +38,6 @@ use std::ops::Range;
 extern crate bitfield;
 
 /* logging */
-#[macro_use]
 extern crate log;
 
 /* Event for output (expanded) array. */

@@ -106,6 +106,8 @@ impl<'a, 'b> Index<'a> {
 		x[2] = UdonOp::Del as u8;
 		SimdAlignedU8::new(&x)
 	};
+
+	#[allow(dead_code)]
 	const SCATTER_MASK: SimdAlignedU8 = {
 		let mut x = [0x80u8; 16];
 		x[0] = 0;
@@ -113,6 +115,7 @@ impl<'a, 'b> Index<'a> {
 		x[2] = 0;
 		SimdAlignedU8::new(&x)
 	};
+
 	const IS_DEL_THRESH: SimdAlignedU8 = {
 		let mut x = [0xffu8; 16];
 		x[0] = 0x1f;
