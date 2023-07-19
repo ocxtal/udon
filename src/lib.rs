@@ -16,8 +16,6 @@ https://samtools.github.io/hts-specs/
 Note: This file provides only APIs. See `builder.rs` and `decoder.rs` for the internals.
 */
 
-#![feature(stdsimd)]
-
 mod utils;
 mod op;
 mod index;

@@ -3,7 +3,7 @@
 name = "udon"
 version = "0.1.0"
 authors = ["Hajime Suzuki <suzuki.hajime.s@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 bitfield = "0.13"
