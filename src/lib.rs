@@ -36,7 +36,7 @@ extern crate log;
 /* Event for output (expanded) array. */
 #[repr(u8)]
 pub enum UdonOp {
-    MisA = 0x04 | 0x00,
+    MisA = 0x04,
     MisC = 0x04 | 0x01,
     MisG = 0x04 | 0x02,
     MisT = 0x04 | 0x03,

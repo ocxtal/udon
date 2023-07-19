@@ -50,9 +50,9 @@ impl<'a> InsTracker<'a> {
             if a == 0 {
                 return None;
             }
-            return Some(a);
+            Some(a)
         });
-        return true;
+        true
     }
 
     pub(super) fn get_offset(&self) -> usize {
@@ -64,13 +64,13 @@ impl<'a> InsTracker<'a> {
     }
 }
 
-impl<'a, 'b> Index<'a> {
+impl<'a> Index<'a> {
     fn fetch_ins_block(&self, pos: usize) -> &[u8] {
         let block_index = pos / BLOCK_PITCH;
         let block = &self.block[block_index];
 
         let ins_offset = block.ins_offset() as usize;
-        return &self.ins[ins_offset as usize..];
+        &self.ins[ins_offset..]
     }
 
     /* ins */
@@ -81,13 +81,13 @@ impl<'a, 'b> Index<'a> {
         /* linear polling on op array */
         let mut ops = ops.iter();
         let mut ins = InsTracker::new(last_op, ins);
-        let len = (&mut ops).peek_fold(0, |a, &x| {
+        let len = ops.peek_fold(0, |a, &x| {
             let len = a + op_len(x);
             if len > rem {
                 return None;
             }
             ins.forward(x);
-            return Some(len);
+            Some(len)
         });
 
         /* if the length doesn't match, it indicates the column doesn't have insertion (so the query is wrong) */
@@ -101,9 +101,9 @@ impl<'a, 'b> Index<'a> {
             if x == 0 {
                 return None;
             }
-            return Some(a + 1);
+            Some(a + 1)
         });
-        return Some(&ins[..len]);
+        Some(&ins[..len])
     }
 
     fn get_ins_core(dst: &mut Vec<u8>, ins: &[u8]) -> usize {
@@ -125,7 +125,7 @@ impl<'a, 'b> Index<'a> {
         });
 
         dst.resize(range.end, 0);
-        return range.end - range.start;
+        range.end - range.start
     }
 
     pub(super) fn get_ins_into(&self, dst: &mut Vec<u8>, pos: usize) -> Option<usize> {

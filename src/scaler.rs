@@ -148,10 +148,8 @@ fn sincx(x: f64, order: f64) -> f64 {
 
 fn clip(x: f64, window: f64) -> f64 {
     if x > 0.0 {
-        return if x < window { 0.0 } else { x - window };
-    } else {
-        return if x > -window { 0.0 } else { x + window };
-    }
+        if x < window { 0.0 } else { x - window }
+    } else if x > -window { 0.0 } else { x + window }
 }
 
 impl Scaler {
@@ -238,7 +236,7 @@ impl Scaler {
         let alpha_coef = 1.0 / (columns_per_pixel.log(2.5).max(1.0) + columns_per_pixel / 5.0);
 
         let mut x = Scaler {
-            columns_per_pixel: columns_per_pixel,
+            columns_per_pixel,
             window: scale.ceil() + 1.0,
             offset: (scale.ceil() + 1.0) / 2.0,
             normalizer: Color {
@@ -253,7 +251,7 @@ impl Scaler {
                     (0x01000000 as f64 * alpha_coef) as i32,
                 ],
             },
-            color: Self::build_color_table(&color),
+            color: Self::build_color_table(color),
             table: Default::default(),
         };
 
@@ -355,7 +353,7 @@ impl Scaler {
             // println!("frac({}), {:?}", base.fract(), table);
 
             let mut a = Color::default();
-            for (&coef, &column) in (&table).iter().zip((&src[range]).iter()) {
+            for (&coef, &column) in table.iter().zip(src[range].iter()) {
                 // println!("col({}), color({:?}), coef({})", column, self.pick_color(column), coef);
                 a += self.pick_color(column) * coef;
             }
@@ -365,7 +363,7 @@ impl Scaler {
             dst.push(<[[u8; 4]; 2]>::from(&a));
         }
 
-        return None;
+        None
     }
 }
 

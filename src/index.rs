@@ -50,7 +50,7 @@ impl<'a> Index<'a> {
         if range.end > self.ref_span {
             return None;
         }
-        return Some(());
+        Some(())
     }
 
     /* fetch block head for this pos. */
@@ -71,7 +71,7 @@ impl<'a> Index<'a> {
         };
 
         // debug!("pos({}), rem({}), skip({})", pos, block_rem, op_skip);
-        return (last_op, ops, block_rem + op_skip);
+        (last_op, ops, block_rem + op_skip)
     }
 
     pub(super) fn scan_op_array(&self, pos: usize) -> (&[u8], usize) {
@@ -81,14 +81,14 @@ impl<'a> Index<'a> {
 
         /* linear polling */
         let mut ops = ops.iter();
-        let ofs = (&mut ops).peek_fold(0, |a, &x| {
+        let ofs = ops.peek_fold(0, |a, &x| {
             let len = a + op_len(x);
 
             /* continue if at least one column remaining */
             if len >= rem {
                 return None;
             }
-            return Some(len);
+            Some(len)
         });
 
         // debug!("rem({}), ofs({})", rem, ofs);

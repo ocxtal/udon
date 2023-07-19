@@ -180,13 +180,13 @@ pub(super) fn atoi_unchecked(v: &mut Iter<u8>) -> u64 {
             return None;
         }
 
-        return Some(10 * a + m);
+        Some(10 * a + m)
     })
 }
 
 #[allow(dead_code)]
 pub(super) fn isnum(c: u8) -> bool {
-    return (c as u64).wrapping_sub('0' as u64) < 10 as u64;
+    (c as u64).wrapping_sub('0' as u64) < 10_u64
 }
 
 /*
@@ -196,7 +196,7 @@ and then mark mismatch.
 pub(super) fn transcode_base_unchecked(c: u8) -> u32 {
     let c = c as u32;
     let b2 = ((c >> 1) - (c >> 3)) & 0x03;
-    return CompressMark::Mismatch as u32 + b2;
+    CompressMark::Mismatch as u32 + b2
 }
 
 #[allow(dead_code)]
@@ -213,7 +213,7 @@ pub(super) fn encode_base_unchecked(c: char) -> u8 {
 #[allow(dead_code)]
 pub(super) fn decode_base_unchecked(c: u32) -> char {
     /* one-hot encoding */
-    match "-AC-G---T-------".bytes().nth(c as usize) {
+    match "-AC-G---T-------".as_bytes().get(c as usize).copied() {
         None => '-',
         Some(x) => x as char,
     }

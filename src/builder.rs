@@ -132,7 +132,7 @@ fn is_clip(c: Cigar) -> Option<(bool, usize)> {
     }
 
     /* (is_clip, length) */
-    return Some((op == CigarOp::SoftClip as u32, c.len() as usize));
+    Some((op == CigarOp::SoftClip as u32, c.len() as usize))
 }
 
 #[derive(Copy, Clone, Default)]
@@ -143,7 +143,7 @@ struct Clip {
 
 fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], Clip)> {
     /* strip tail first */
-    if cigar.len() == 0 {
+    if cigar.is_empty() {
         return None;
     } /* cigar length must be at least one */
     let cigar = match is_clip(cigar[cigar.len() - 1]) {
@@ -152,10 +152,10 @@ fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], Clip)> {
     };
 
     /* strip head */
-    if cigar.len() == 0 {
+    if cigar.is_empty() {
         return None;
     } /* check again */
-    return match is_clip(cigar[0]) {
+    match is_clip(cigar[0]) {
         None => Some((
             cigar,
             Clip {
@@ -170,7 +170,7 @@ fn strip_clips(cigar: &[Cigar]) -> Option<(&[Cigar], Clip)> {
                 len: x.1,
             },
         )),
-    };
+    }
 }
 
 /* copy 4bit-encoded bases, for storing insertions */
@@ -252,12 +252,12 @@ impl<'a> Precursor {
 
         /* initialize state */
         let mut state = Builder::<'a> {
-            buf: buf, /* move */
+            buf, /* move */
             ins: Vec::new(),
             cigar: cigar.iter(), /* iterator for slice is a pair of pointers (ptr, tail) */
             mdstr: mdstr.iter(),
             query: packed_query,
-            qofs: qofs,
+            qofs,
         };
 
         /* if error detected, unwind destination vector and return it (so that the vector won't lost) */
@@ -394,7 +394,7 @@ pub struct Builder<'a> {
     qofs: usize,
 }
 
-impl<'a, 'b> Builder<'a> {
+impl<'a> Builder<'a> {
     /*
      * input parsers
      */
@@ -416,7 +416,7 @@ impl<'a, 'b> Builder<'a> {
         if (ofs & 0x01) == 0x01 {
             return transcode_base_unchecked(c & 0x0f);
         }
-        return transcode_base_unchecked(c >> 4);
+        transcode_base_unchecked(c >> 4)
     }
 
     fn cigar_rem(&self) -> usize {
@@ -439,13 +439,13 @@ impl<'a, 'b> Builder<'a> {
         if op >= CigarOp::Eq as u32 {
             return CigarOp::Match as u32;
         }
-        return op;
+        op
     }
 
     fn eat_cigar(&mut self) -> Option<(u32, usize)> {
         let c = self.cigar.next()?;
 
-        let op = Self::canonize_op(c.op() as u32);
+        let op = Self::canonize_op(c.op());
         let mut len = c.len() as usize;
         // debug!("first op({:?}), len({:?})", op, len);
 
@@ -461,29 +461,28 @@ impl<'a, 'b> Builder<'a> {
             // debug!("append op({:?}), len({:?})", c.op(), c.len());
         }
 
-        return Some((op, len));
+        Some((op, len))
     }
 
     /* MD string handling: forward pointer along with atoi */
     fn strip_zero(&mut self) {
         let md = self.mdstr.as_slice();
-        if md.len() == 0 || md[0] != '0' as u8 {
+        if md.is_empty() || md[0] != b'0' {
             return;
         }
 
         let md = &mut self.mdstr;
         md.next();
-        return;
     }
 
     fn eat_md_del(&mut self, len: usize) -> Option<()> {
         self.mdstr.nth(len - 1)?; /* error if starved */
         self.mdstr.next(); /* not regarded as error for the last element */
-        return Some(());
+        Some(())
     }
 
     fn eat_md_eq(&mut self) -> usize {
-        return atoi_unchecked(&mut self.mdstr) as usize;
+        atoi_unchecked(&mut self.mdstr) as usize
     }
 
     /* make MD iterator peekable */
@@ -506,7 +505,7 @@ impl<'a, 'b> Builder<'a> {
         zero is '^' or nucleotide to properly distinguish double mismatch
         from deletion-after-mismatch. (see `test_udon_build_mismatch_del`)
         */
-        return md[1] == '0' as u8 && md[2] != '^' as u8;
+        md[1] == b'0' && md[2] != b'^'
     }
 
     /* writers, on top of impl Writer for Vec<u8> */
@@ -555,7 +554,7 @@ impl<'a, 'b> Builder<'a> {
         // debug!("eat_del, len({}), rem({})", len, rem);
 
         assert!(rem > 0);
-        return Some(rem as u32); /* remainder is concatenated to the next match into the next chunk */
+        Some(rem as u32)/* remainder is concatenated to the next match into the next chunk */
     }
     fn eat_ins(&mut self, xrem: usize) -> Option<usize> {
         assert!(self.qofs <= std::i32::MAX as usize);
@@ -569,7 +568,7 @@ impl<'a, 'b> Builder<'a> {
         // debug!("eat_ins, xrem({}), len({}), qofs({})", xrem, len, self.qofs);
 
         self.save_ins(ofs, len); /* use offset before forwarding */
-        return Some(xrem); /* there might be remainder */
+        Some(xrem)/* there might be remainder */
     }
 
     /* forward match; eating both cigar and md strings */
@@ -610,7 +609,7 @@ impl<'a, 'b> Builder<'a> {
             // debug!("eat_match, crem({}), md({:?}, {:?})", crem, from_utf8(&self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(32)]), &self.mdstr.as_slice()[.. self.mdstr.as_slice().len().min(32)]);
 
             op = self.next_base(); /* we only have a single mismatch remaining, will be combined to succeeding matches */
-            self.mdstr.nth(0)?;
+            self.mdstr.next()?;
 
             /*
             xrem for the next { match, insertion } region, including +1 for the last mismatch.
@@ -629,7 +628,7 @@ impl<'a, 'b> Builder<'a> {
 
         /* invariant condition: if match to reference (md) continues, an insertion must follow */
         assert!(xrem == 0 || self.peek_cigar_op().unwrap() == CigarOp::Ins as u32);
-        return Some(xrem); /* nonzero if insertion follows */
+        Some(xrem)/* nonzero if insertion follows */
     }
 
     /* insertion bin handling */
@@ -643,7 +642,7 @@ impl<'a, 'b> Builder<'a> {
         let query = self.query;
         self.ins
             .reserve_to(packet_size, |arr: &mut [u8], _: &[u8]| -> usize {
-                copy_packed_nucl(&query, arr, qofs, qlen);
+                copy_packed_nucl(query, arr, qofs, qlen);
                 arr[arr.len() - 1] = 0;
 
                 packet_size
@@ -669,7 +668,7 @@ impl<'a, 'b> Builder<'a> {
 
             /* op iterator not forwarded here */
             self.push_op(0, CompressMark::Ins as u32);
-            self.ins.write(&[0]).ok()?; /* dummy insertion marker for this */
+            self.ins.write_all(&[0]).ok()?; /* dummy insertion marker for this */
         } else if op == CigarOp::Match as u32 {
             xrem = self.eat_md_eq();
 
@@ -678,7 +677,7 @@ impl<'a, 'b> Builder<'a> {
             (the insertion is real one for a CIGAR that starts with insertion. see above.)
             */
             xrem = self.eat_match(xrem, CompressMark::Ins as u32)?;
-            self.ins.write(&[0]).ok()?; /* dummy insertion marker at the head */
+            self.ins.write_all(&[0]).ok()?; /* dummy insertion marker at the head */
         }
 
         'outer: loop {
@@ -744,10 +743,10 @@ impl<'a, 'b> Builder<'a> {
         }
 
         /* range in output buffer, for composing precursor */
-        return Some(Range::<usize> {
+        Some(Range::<usize> {
             start: base_offset,
             end: self.buf.len(),
-        });
+        })
     }
 
     /* accumulate chunk lengths to compute reference span (for computing index table size) */
@@ -813,10 +812,10 @@ impl<'a, 'b> Builder<'a> {
             }
 
             let dst = dst.into_slice();
-            assert!(dst.len() == 0, "len({})", dst.len());
+            assert!(dst.is_empty(), "len({})", dst.len());
             block.len()
         });
-        return Some(range);
+        Some(range)
     }
 
     fn pack_ins(&mut self) -> Option<Range<usize>> {
@@ -829,7 +828,7 @@ impl<'a, 'b> Builder<'a> {
             arr.copy_from_slice(ins.as_slice());
             ins.len()
         });
-        return Some(range);
+        Some(range)
     }
 
     /* convert internal object (Builder) to Precursor */
@@ -855,7 +854,7 @@ impl<'a, 'b> Builder<'a> {
         Precursor {
             /* just save */
             size: range.end - range.start,
-            ref_span: ref_span,
+            ref_span,
 
             /* compose fake slices (dereference causes SEGV) */
             op: SlicePrecursor::compose(op),

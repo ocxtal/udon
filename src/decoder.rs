@@ -55,26 +55,26 @@ causes exception.
 */
 
 /* decoder implementation */
-impl<'a, 'b> Index<'a> {
+impl<'a> Index<'a> {
     pub(super) fn decode_raw_into(
         &self,
         dst: &mut Vec<u8>,
         ref_span: &Range<usize>,
     ) -> Option<usize> {
-        self.check_span(&ref_span)?;
-        self.decode_core(dst, &ref_span)
+        self.check_span(ref_span)?;
+        self.decode_core(dst, ref_span)
     }
 
     pub(super) fn decode_raw(&self, ref_span: &Range<usize>) -> Option<Vec<u8>> {
-        self.check_span(&ref_span)?;
+        self.check_span(ref_span)?;
 
         let size = ref_span.end - ref_span.start;
         let mut buf = Vec::<u8>::with_capacity(size);
 
-        let used = self.decode_core(&mut buf, &ref_span)?;
+        let used = self.decode_core(&mut buf, ref_span)?;
         buf.resize(used, 0);
 
-        return Some(buf);
+        Some(buf)
     }
 
     pub(super) fn decode_scaled_into(
@@ -84,8 +84,8 @@ impl<'a, 'b> Index<'a> {
         offset_in_pixels: f64,
         scaler: &Scaler,
     ) -> Option<usize> {
-        self.check_span(&ref_span)?;
-        self.decode_scaled_core(dst, &ref_span, offset_in_pixels, &scaler)
+        self.check_span(ref_span)?;
+        self.decode_scaled_core(dst, ref_span, offset_in_pixels, scaler)
     }
 
     pub(super) fn decode_scaled(
@@ -94,18 +94,18 @@ impl<'a, 'b> Index<'a> {
         offset_in_pixels: f64,
         scaler: &Scaler,
     ) -> Option<Vec<[[u8; 4]; 2]>> {
-        self.check_span(&ref_span)?;
+        self.check_span(ref_span)?;
 
         let span = ref_span.end - ref_span.start;
         let size = scaler.expected_size(span);
         let mut buf = Vec::<[[u8; 4]; 2]>::with_capacity(size);
         // debug!("ref_span({:?}), span({}), size({})", ref_span, span, size);
 
-        let used = self.decode_scaled_core(&mut buf, &ref_span, offset_in_pixels, &scaler)?;
+        let used = self.decode_scaled_core(&mut buf, ref_span, offset_in_pixels, scaler)?;
         buf.resize(used, [[0; 4]; 2]);
         // debug!("used({})", used);
 
-        return Some(buf);
+        Some(buf)
     }
 
     const DEL_MASK: SimdAlignedU8 = {
@@ -230,7 +230,7 @@ impl<'a, 'b> Index<'a> {
             let (block_len, next_ins) = unsafe { Self::decode_core_block(&mut buf, *op, ins) };
 
             let block_len = block_len - ofs;
-            dst.write(&buf[ofs..ofs + block_len]).ok()?; /* I expect it never fails though... */
+            dst.write_all(&buf[ofs..ofs + block_len]).ok()?; /* I expect it never fails though... */
             rem -= block_len;
             ins = next_ins; /* just copy to mutable variable for use in the loop */
             ofs = 0; /* clear offset for tail */
@@ -240,7 +240,7 @@ impl<'a, 'b> Index<'a> {
                 let op = ops.next()?;
                 let (block_len, next_ins) = unsafe { Self::decode_core_block(&mut buf, *op, ins) };
 
-                dst.write(&buf[0..block_len]).ok()?;
+                dst.write_all(&buf[0..block_len]).ok()?;
                 rem -= block_len;
                 ins = next_ins;
             }
@@ -259,7 +259,7 @@ impl<'a, 'b> Index<'a> {
                 ins = next_ins;
             }
 
-            dst.write(&buf[end - rem..end]).ok()?;
+            dst.write_all(&buf[end - rem..end]).ok()?;
         }
 
         Some(len)
@@ -274,16 +274,14 @@ impl<'a, 'b> Index<'a> {
     ) -> Option<usize> {
         /* states (working variables) */
         let (mut offset, margin) = scaler.init(offset_in_pixels);
-        let mut dst = dst;
+        let dst = dst;
 
         // println!("offset({}), margin({})", offset, margin);
 
         /* buffer */
         let bulk_size: usize = 16 * 1024; /* 16KB */
-        let mut buf = Vec::<u8>::with_capacity(bulk_size + margin);
-        for _ in 0..margin {
-            buf.push(0);
-        }
+        let mut buf = vec![0; margin];
+        buf.reserve(bulk_size);
 
         for spos in ref_span.clone().step_by(bulk_size) {
             /* decode a block */
@@ -295,13 +293,11 @@ impl<'a, 'b> Index<'a> {
                 },
             )?;
             if decoded < bulk_size {
-                for _ in 0..margin + 1 {
-                    buf.push(0);
-                }
+                buf.resize(buf.len() + margin + 1, 0);
             }
 
             /* rescale to dst array, forward offset */
-            let (next_offset, consumed) = scaler.scale(&mut dst, &buf, offset)?;
+            let (next_offset, consumed) = scaler.scale(dst, &buf, offset)?;
             offset = next_offset;
             if buf.len() < consumed || consumed < buf.len() - consumed {
                 continue;
