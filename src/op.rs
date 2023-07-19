@@ -1,15 +1,12 @@
-
-
 use std::slice::Iter;
-
 
 /* bam CIGAR (raw CIGAR) related structs:
 Transcoder API takes an array of ops, defined as the the following:
 
 ```
 struct {
-	uint32_t op : 4;
-	uint32_t len : 28;
+    uint32_t op : 4;
+    uint32_t len : 28;
 };
 ```
 
@@ -20,25 +17,24 @@ the detailed specification is found in SAM/BAM spec pdf.
 #[repr(u32)]
 #[allow(dead_code)]
 pub(super) enum CigarOp {
-	Match    = 0,
-	Ins      = 0x01,
-	Del      = 0x02,
-	Unknown  = 0x03,
-	SoftClip = 0x04,
-	HardClip = 0x05,
-	Pad      = 0x06,
-	Eq       = 0x07,
-	Mismatch = 0x08
+    Match = 0,
+    Ins = 0x01,
+    Del = 0x02,
+    Unknown = 0x03,
+    SoftClip = 0x04,
+    HardClip = 0x05,
+    Pad = 0x06,
+    Eq = 0x07,
+    Mismatch = 0x08,
 }
 
 /* bam CIGAR element definition */
-bitfield!{
-	#[derive(Copy, Clone, Default)]
-	pub struct Cigar(u32);
-	pub op, _:  3,  0;
-	pub len, _: 31, 4;
+bitfield! {
+    #[derive(Copy, Clone, Default)]
+    pub struct Cigar(u32);
+    pub op, _:  3,  0;
+    pub len, _: 31, 4;
 }
-
 
 /* transcoded CIGAR and index
 
@@ -70,64 +66,59 @@ is not always aligned to chunk (op) boundary, an offset within chunk from the bl
 boundary is also stored in `op_skip` field.
 */
 
-
 /* op trailing events */
 #[repr(u32)]
 pub(super) enum CompressMark {
-	Ins      = 0x00,
+    Ins = 0x00,
 
-	/* mismatch base for 'A': 0x04, .., 'T': 0x07 */
-	Mismatch = 0x04,
+    /* mismatch base for 'A': 0x04, .., 'T': 0x07 */
+    Mismatch = 0x04,
 }
 
 /*
 op -> len conversion
 */
 pub(super) fn op_len(x: u8) -> usize {
-	let len = x as usize & 0x1f;
-	len - (len == 31) as usize
+    let len = x as usize & 0x1f;
+    len - (len == 31) as usize
 }
 
 pub(super) fn op_marker(x: u8) -> u32 {
-	(x>>5) as u32
+    (x >> 5) as u32
 }
 
 pub(super) fn op_is_cont(x: u8) -> bool {
-	(x & 0x1f) == 0x1f
+    (x & 0x1f) == 0x1f
 }
-
 
 /* OpsIterator
 
 Iterates over op array (&[u8]), accumulating reference-side offset.
 */
 pub(super) struct OpsIter<'a> {
-	iter: Iter<'a, u8>,
-	rofs: usize
+    iter: Iter<'a, u8>,
+    rofs: usize,
 }
 
 pub(super) trait IntoOpsIterator<'a> {
-	fn iter_ops(self, base_rofs: usize) -> OpsIter<'a>;
+    fn iter_ops(self, base_rofs: usize) -> OpsIter<'a>;
 }
 
 impl<'a> IntoOpsIterator<'a> for &'a [u8] {
-	fn iter_ops(self, base_rofs: usize) -> OpsIter<'a> {
-		OpsIter {
-			iter: self.iter(),
-			rofs: base_rofs
-		}
-	}
+    fn iter_ops(self, base_rofs: usize) -> OpsIter<'a> {
+        OpsIter {
+            iter: self.iter(),
+            rofs: base_rofs,
+        }
+    }
 }
 
 impl<'a> Iterator for OpsIter<'a> {
-	type Item = (u8, usize);
+    type Item = (u8, usize);
 
-	fn next(&mut self) -> Option<Self::Item> {
-		let x    = self.iter.next()?;
-		self.rofs += op_len(*x);
-		Some((*x, self.rofs))
-	}
+    fn next(&mut self) -> Option<Self::Item> {
+        let x = self.iter.next()?;
+        self.rofs += op_len(*x);
+        Some((*x, self.rofs))
+    }
 }
-
-
-
