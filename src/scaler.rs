@@ -44,6 +44,7 @@ impl From<&Color> for [[u8; 4]; 2] {
         x
     }
 }
+
 /*
 impl From<&Color> for (u32, u32) {
     fn from(val: &Color) -> (u32, u32) {
@@ -67,6 +68,7 @@ impl Add<Color> for Color {
         x
     }
 }
+
 impl Sub<Color> for Color {
     type Output = Color;
     fn sub(self, other: Color) -> Color {
@@ -77,6 +79,7 @@ impl Sub<Color> for Color {
         x
     }
 }
+
 impl Mul<Color> for Color {
     type Output = Color;
     fn mul(self, other: Color) -> Color {
@@ -100,6 +103,7 @@ impl Add<i32> for Color {
         x
     }
 }
+
 impl Mul<i32> for Color {
     type Output = Color;
     fn mul(self, other: i32) -> Color {
@@ -118,6 +122,7 @@ impl AddAssign<Color> for Color {
         *self = self.add(other);
     }
 }
+
 impl MulAssign<Color> for Color {
     fn mul_assign(&mut self, other: Color) {
         *self = self.mul(other);
@@ -168,6 +173,7 @@ impl Scaler {
         index[UdonOp::Ins as usize | UdonOp::Del as usize] = 10;
         index
     };
+
     fn index(column: u8) -> usize {
         assert!(column < 32, "{}", column);
 

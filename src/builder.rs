@@ -523,6 +523,7 @@ impl<'a> Builder<'a> {
             1
         });
     }
+
     fn push_match(&mut self, match_len: usize, last_op: u32) {
         let mut op = last_op;
         let mut rem = match_len;
@@ -556,6 +557,7 @@ impl<'a> Builder<'a> {
         assert!(rem > 0);
         Some(rem as u32)/* remainder is concatenated to the next match into the next chunk */
     }
+
     fn eat_ins(&mut self, xrem: usize) -> Option<usize> {
         assert!(self.qofs <= std::i32::MAX as usize);
 
